@@ -68,7 +68,7 @@ except Exception as e:
     QT_AVAILABLE = False
     QT_IMPORT_ERROR = e
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 
 # ---- ESZKÖZÖK ----
@@ -141,6 +141,9 @@ ASSETS = {
 FX_URL = "https://api.exchangerate-api.com/v4/latest/USD"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
 REQUEST_TIMEOUT = 15
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; AssetTracker/1.0)",
@@ -831,13 +834,17 @@ def moving_average(prices, window=20):
 
 
 # ---- AI ----
-def build_features_and_labels(prices):
+def build_features_and_labels(prices, volumes=None):
     """
     Features on each hour:
-    - short / medium returns
+    - short / medium / long returns
     - short volatility
-    - moving average ratios
+    - moving average ratios (SMA + EMA)
     - RSI normalized
+    - MACD histogram
+    - Bollinger Band position
+    - volume ratio vs SMA (if available)
+    - price momentum (acceleration)
     Label: next-hour direction (1=up, 0=down/flat)
     """
     if prices.size < 120:
@@ -845,28 +852,69 @@ def build_features_and_labels(prices):
 
     X, y = [], []
     returns = np.diff(prices) / prices[:-1]
-    lookback = 30
+    lookback = 48  # longer lookback for more context
 
     for i in range(lookback, prices.size - 1):
         ret_1 = returns[i - 1]
         ret_3 = (prices[i] / prices[i - 3]) - 1.0
         ret_12 = (prices[i] / prices[i - 12]) - 1.0
+        ret_24 = (prices[i] / prices[i - 24]) - 1.0
+        ret_48 = (prices[i] / prices[i - 48]) - 1.0
         vol_12 = float(np.std(returns[i - 12:i]))
+        vol_24 = float(np.std(returns[i - 24:i]))
+
         ma_10 = float(np.mean(prices[i - 10:i]))
         ma_30 = float(np.mean(prices[i - 30:i]))
         ma_ratio_10 = (prices[i] / ma_10) - 1.0
         ma_ratio_30 = (prices[i] / ma_30) - 1.0
+
+        ema_12 = float(ema_np(prices[: i + 1], 12)[-1])
+        ema_26 = float(ema_np(prices[: i + 1], 26)[-1])
+        ema_ratio_12 = (prices[i] / ema_12) - 1.0 if ema_12 != 0 else 0.0
+
+        macd_line_val = ema_12 - ema_26
+        prev_ema_12 = float(ema_np(prices[:i], 12)[-1]) if i >= 12 else ema_12
+        prev_ema_26 = float(ema_np(prices[:i], 26)[-1]) if i >= 26 else ema_26
+        prev_macd = prev_ema_12 - prev_ema_26
+        macd_accel = macd_line_val - prev_macd
+
+        bb_mid = ma_30
+        bb_std = float(np.std(prices[i - 20:i])) if i >= 20 else 1e-8
+        bb_upper = bb_mid + 2.0 * bb_std
+        bb_lower = bb_mid - 2.0 * bb_std
+        bb_width = bb_upper - bb_lower
+        bb_pos = (prices[i] - bb_lower) / bb_width if bb_width > 0 else 0.5
+
         rsi = calculate_rsi(prices[: i + 1]) / 100.0
+
+        momentum = ret_1 - (returns[i - 4] if i >= 4 else 0.0)
+
+        vol_ratio = 1.0
+        if volumes is not None and i < len(volumes):
+            v_slice = volumes[max(0, i - 20):i]
+            v_sma = float(np.mean(v_slice)) if v_slice.size > 0 else 1.0
+            if v_sma > 0:
+                vol_ratio = float(volumes[i]) / v_sma
 
         X.append(
             [
                 ret_1,
                 ret_3,
                 ret_12,
+                ret_24,
+                ret_48,
                 vol_12,
+                vol_24,
                 ma_ratio_10,
                 ma_ratio_30,
+                ema_ratio_12,
+                macd_line_val,
+                macd_accel,
+                bb_pos,
+                bb_width / (prices[i] + 1e-8),
                 rsi,
+                momentum,
+                min(vol_ratio, 5.0),
             ]
         )
         y.append(1 if prices[i + 1] > prices[i] else 0)
@@ -892,8 +940,20 @@ def random_forest_up_probability(model, feature_row):
     return float(1.0 - proba[0])
 
 
-def predict(prices):
-    X, y = build_features_and_labels(prices)
+FEATURE_NAMES = [
+    "ret_1h", "ret_3h", "ret_12h", "ret_24h", "ret_48h",
+    "vol_12h", "vol_24h",
+    "ma_ratio_10", "ma_ratio_30", "ema_ratio_12",
+    "macd_line", "macd_accel",
+    "bb_pos", "bb_width_rel",
+    "rsi",
+    "momentum",
+    "volume_ratio",
+]
+
+
+def predict(prices, volumes=None):
+    X, y = build_features_and_labels(prices, volumes=volumes)
     if X.shape[0] < 80:
         raise ValueError("Túl kevés minta a tanításhoz.")
 
@@ -913,15 +973,40 @@ def predict(prices):
         X_train, X_test = X[:split], X[split:]
         y_train, y_test = y[:split], y[split:]
 
-    model = RandomForestClassifier(
+    rf = RandomForestClassifier(
         n_estimators=300,
+        max_features="sqrt",
         min_samples_leaf=3,
         random_state=42,
     )
-    model.fit(X_train, y_train)
+    rf.fit(X_train, y_train)
 
-    accuracy = float((model.predict(X_test) == y_test).mean()) if y_test.size else 0.0
-    next_up_prob = random_forest_up_probability(model, X[-1])
+    gb = GradientBoostingClassifier(
+        n_estimators=150,
+        learning_rate=0.05,
+        max_depth=4,
+        subsample=0.8,
+        random_state=42,
+    )
+    gb.fit(X_train, y_train)
+
+    rf_acc = float((rf.predict(X_test) == y_test).mean()) if y_test.size else 0.0
+    gb_acc = float((gb.predict(X_test) == y_test).mean()) if y_test.size else 0.0
+    accuracy = (rf_acc + gb_acc) / 2.0
+
+    rf_prob = random_forest_up_probability(rf, X[-1])
+    last_row = np.asarray(X[-1], dtype=float).reshape(1, -1)
+    gb_classes = list(gb.classes_)
+    gb_proba = gb.predict_proba(last_row)[0]
+    gb_prob = float(gb_proba[gb_classes.index(1)]) if 1 in gb_classes else 0.5
+    next_up_prob = (rf_prob + gb_prob) / 2.0
+
+    importances = rf.feature_importances_
+    feat_imp = sorted(
+        zip(FEATURE_NAMES, importances.tolist()),
+        key=lambda x: x[1],
+        reverse=True,
+    )[:5]
 
     current = float(prices[-1])
     tail = prices[-49:]
@@ -930,44 +1015,66 @@ def predict(prices):
     drift = (2.0 * next_up_prob - 1.0) * recent_abs_move
     future = current * (1.0 + drift)
 
-    return current, future, next_up_prob, accuracy
+    return current, future, next_up_prob, accuracy, feat_imp
 
 
 # ---- KOMBINÁLT DÖNTÉS ----
-def smart_decision(prices):
-    current, future, next_up_prob, accuracy = predict(prices)
+def smart_decision(prices, volumes=None):
+    current, future, next_up_prob, accuracy, feat_imp = predict(prices, volumes=volumes)
 
     rsi = calculate_rsi(prices)
     ma = moving_average(prices)
 
-    signals = []
+    macd_line, macd_signal, macd_hist = macd_bundle(prices)
+    bb_upper, bb_lower, bb_mid = bollinger_last(prices)
 
-    if next_up_prob < 0.45:
-        signals.append("SELL")
-    elif next_up_prob > 0.55:
-        signals.append("BUY")
+    weighted_buy = 0.0
+    weighted_sell = 0.0
 
-    if rsi > 70:
-        signals.append("SELL")
+    # AI ensemble signal (weight 2.0)
+    if next_up_prob > 0.55:
+        weighted_buy += 2.0 * (next_up_prob - 0.5) * 2
+    elif next_up_prob < 0.45:
+        weighted_sell += 2.0 * (0.5 - next_up_prob) * 2
+
+    # RSI signal (weight 1.5)
+    if rsi > 75:
+        weighted_sell += 1.5
+    elif rsi > 70:
+        weighted_sell += 1.0
+    elif rsi < 25:
+        weighted_buy += 1.5
     elif rsi < 30:
-        signals.append("BUY")
+        weighted_buy += 1.0
 
+    # MA signal (weight 1.0)
     if current > ma:
-        signals.append("BUY")
+        weighted_buy += 1.0
     else:
-        signals.append("SELL")
+        weighted_sell += 1.0
 
-    sell_count = signals.count("SELL")
-    buy_count = signals.count("BUY")
+    # MACD signal (weight 1.5)
+    if macd_hist is not None:
+        if macd_hist > 0 and macd_line > macd_signal:
+            weighted_buy += 1.5
+        elif macd_hist < 0 and macd_line < macd_signal:
+            weighted_sell += 1.5
 
-    if sell_count >= 2:
+    # Bollinger Band signal (weight 1.0)
+    if bb_upper is not None and bb_lower is not None and bb_upper > bb_lower:
+        if current > bb_upper:
+            weighted_sell += 1.0
+        elif current < bb_lower:
+            weighted_buy += 1.0
+
+    if weighted_sell >= 3.0 and weighted_sell > weighted_buy:
         decision = "ELADÁS ⚠️"
-    elif buy_count >= 2:
+    elif weighted_buy >= 3.0 and weighted_buy > weighted_sell:
         decision = "VÉTEL 📈"
     else:
         decision = "VÁRJ ⏳"
 
-    return decision, current, future, rsi, ma, next_up_prob, accuracy
+    return decision, current, future, rsi, ma, next_up_prob, accuracy, feat_imp
 
 
 def build_recommendation(current, future, next_up_prob, accuracy, rsi, ma):
@@ -1095,7 +1202,9 @@ def analyze_asset(name, symbol, rate, display_currency="HUF"):
     mult = yahoo_price_display_multiplier(symbol, rate, display_currency)
     prices_raw, meta, open_fallback_native, volumes_raw = get_asset(symbol)
     prices = prices_raw * mult
-    decision, current, future, rsi, ma, next_up_prob, accuracy = smart_decision(prices)
+    decision, current, future, rsi, ma, next_up_prob, accuracy, feat_imp = smart_decision(
+        prices, volumes=volumes_raw
+    )
     recommendation = build_recommendation(
         current=current,
         future=future,
@@ -1118,6 +1227,7 @@ def analyze_asset(name, symbol, rate, display_currency="HUF"):
         "decision": decision,
         "next_up_prob": next_up_prob,
         "accuracy": accuracy,
+        "feat_imp": feat_imp,
         "recommendation": recommendation,
         "day_change_pct": regular_market_change_pct(meta),
         "session_open": session_open,
@@ -1246,29 +1356,114 @@ def append_live_csv(csv_path, rows):
         writer.writerows(rows)
 
 
-def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, timeout=20):
+def _build_ai_prompt(result, currency):
+    """Build a rich market analysis prompt from an asset result dict."""
+    rec = result.get("recommendation", {})
+    m = result.get("metrics") or {}
+    feat_imp = result.get("feat_imp") or []
+
+    lines = [
+        "Adj rovid, 3-5 pontos magyar piaci osszefoglalot ezek alapjan.",
+        "Ne adj befektetesi garanciat, legyen ovatos hangnem.",
+        "",
+        f"Eszkoz: {result.get('name')} ({result.get('symbol', '')})",
+    ]
+    if result.get("session_open") is not None:
+        lines.append(f"Mai nyitas: {float(result['session_open']):.2f} {currency}")
+    if result.get("previous_close") is not None:
+        lines.append(f"Elozo zaro: {float(result['previous_close']):.2f} {currency}")
+    dcp = result.get("day_change_pct")
+    if dcp is not None:
+        lines.append(f"Napi valtozas: {dcp:+.2f}%")
+    lines += [
+        f"Most: {result.get('current'):.2f} {currency}",
+        f"AI celar (1 ora): {result.get('future'):.2f} {currency}",
+        f"AI ensemble eselye (fel): {result.get('next_up_prob', 0.0) * 100:.1f}%",
+        f"Ensemble modell pontossag: {result.get('accuracy', 0.0) * 100:.1f}%",
+        f"RSI: {result.get('rsi', 0.0):.2f}",
+        f"Mozgoatlag (20): {result.get('ma', 0.0):.2f}",
+    ]
+    if m.get("macd_hist") is not None:
+        lines.append(
+            f"MACD: vonal {m['macd_line']:.4f}, jel {m['macd_signal']:.4f}, "
+            f"histogram {m['macd_hist']:.4f}"
+        )
+    if m.get("bb_mid") is not None:
+        lines.append(
+            f"Bollinger: felso {m['bb_upper']:.2f}, kozep {m['bb_mid']:.2f}, "
+            f"also {m['bb_lower']:.2f}"
+        )
+    if m.get("realized_vol_annual_pct") is not None:
+        lines.append(f"Realizalt volatilitas (evesitett): {m['realized_vol_annual_pct']:.1f}%")
+    if feat_imp:
+        top = ", ".join(f"{n}({v*100:.1f}%)" for n, v in feat_imp[:3])
+        lines.append(f"Legfontosabb AI jellemzok: {top}")
+    lines += [
+        f"Dontes: {result.get('decision')}",
+        f"Javasolt irany: {rec.get('action', 'ismeretlen')} ({rec.get('side', '')})",
+        f"Bizalom: {rec.get('confidence', 0.0) * 100:.1f}%",
+    ]
+    if rec.get("side") != "NEUTRAL":
+        lines.append(f"Stop-loss: {rec.get('stop', 0):.2f} {currency}")
+        lines.append(f"Take-profit: {rec.get('take_profit', 0):.2f} {currency}")
+    return "\n".join(lines)
+
+
+def get_claude_commentary(result, currency, api_key, model=ANTHROPIC_MODEL_DEFAULT, timeout=25):
+    """Get AI commentary using the Anthropic Claude API."""
+    if not api_key:
+        return None, "Nincs Anthropic API kulcs."
+    prompt = _build_ai_prompt(result, currency)
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "max_tokens": 512,
+        "system": (
+            "Te egy konzervativ penzugyi elemzo asszisztens vagy. "
+            "Rovid, strukturalt, magyar nyelvu osszefoglalokat adsz. "
+            "Soha nem garantalsz hozamot, es mindig felhivod a figyelmet a kockázatokra."
+        ),
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        r = http_post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=timeout)
+        data = r.json()
+        if r.status_code >= 400:
+            err = data.get("error") if isinstance(data, dict) else None
+            if isinstance(err, dict):
+                msg = err.get("message") or str(err)
+            else:
+                msg = str(err) if err else r.text or r.reason
+            return None, f"Anthropic API ({r.status_code}): {msg}"
+        content_blocks = data.get("content") or []
+        text = " ".join(
+            b.get("text", "") for b in content_blocks if isinstance(b, dict) and b.get("type") == "text"
+        ).strip()
+        if not text:
+            return None, "Ures Claude valasz."
+        return text, None
+    except (requests.RequestException, ValueError, TypeError) as e:
+        return None, str(e)
+
+
+def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, timeout=20,
+                      claude_api_key=None, claude_model=ANTHROPIC_MODEL_DEFAULT):
+    """Get AI commentary; tries Claude first if claude_api_key is provided, then OpenAI."""
+    if claude_api_key:
+        text, err = get_claude_commentary(result, currency, claude_api_key, model=claude_model, timeout=timeout)
+        if text:
+            return text, None
+        # fallback to OpenAI if Claude fails
+        if not api_key:
+            return None, f"Claude hiba: {err}"
+
     if not api_key:
         return None, "Nincs AI API kulcs."
-    rec = result.get("recommendation", {})
-    prompt = (
-        "Adj rovid, 3-5 pontos magyar piaci osszefoglalot ezek alapjan. "
-        "Ne adj befektetesi garanciat, legyen ovatos hangnem.\n\n"
-        f"Eszkoz: {result.get('name')}\n"
-    )
-    if result.get("session_open") is not None:
-        prompt += f"Mai nyitas: {float(result['session_open']):.2f} {currency}\n"
-    if result.get("previous_close") is not None:
-        prompt += f"Elozo zaro: {float(result['previous_close']):.2f} {currency}\n"
-    prompt += (
-        f"Most: {result.get('current'):.2f} {currency}\n"
-        f"AI celar (1 ora): {result.get('future'):.2f} {currency}\n"
-        f"AI fel esely: {result.get('next_up_prob', 0.0) * 100:.1f}%\n"
-        f"Modell pontossag: {result.get('accuracy', 0.0) * 100:.1f}%\n"
-        f"RSI: {result.get('rsi', 0.0):.2f}\n"
-        f"Mozgoatlag: {result.get('ma', 0.0):.2f}\n"
-        f"Dontes: {result.get('decision')}\n"
-        f"Javasolt irany: {rec.get('action', 'ismeretlen')}\n"
-    )
+    prompt = _build_ai_prompt(result, currency)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -1567,6 +1762,11 @@ def format_result(result, currency="HUF"):
             text += f"- Realizalt volatilitas (evesitett, kb): {m['realized_vol_annual_pct']:.1f}%\n"
         if m.get("max_drawdown_pct") is not None:
             text += f"- Max. visszaeses (idosoron): {m['max_drawdown_pct']:.2f}%\n"
+    feat_imp = result.get("feat_imp") or []
+    if feat_imp:
+        text += "Top AI jellemzok (fontossag):\n"
+        for fname, fval in feat_imp[:5]:
+            text += f"- {fname}: {fval * 100:.1f}%\n"
     text += f"Döntés: {result['decision']}\n"
     text += "Ajánlás:\n"
     text += f"- Irány: {rec['action']} ({rec['side']})\n"
@@ -1875,6 +2075,8 @@ if QT_AVAILABLE:
             self.ai_commentary_enabled = False
             self.ai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
             self.ai_model = OPENAI_MODEL_DEFAULT
+            self.claude_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            self.claude_model = ANTHROPIC_MODEL_DEFAULT
             self.csv_autosave_enabled = True
             self.csv_path = str(Path.cwd() / "live_history.csv")
             self.last_prices_live = {}
@@ -2791,10 +2993,13 @@ if QT_AVAILABLE:
             self.refresh_ai_status()
 
         def refresh_ai_status(self):
-            if self.ai_commentary_enabled and self.ai_api_key:
-                self.ai_status.setText(f"AI: aktiv ({self.ai_model})")
-            elif self.ai_api_key:
-                self.ai_status.setText(f"AI: kulcs beallitva ({self.ai_model})")
+            has_key = bool(self.ai_api_key or self.claude_api_key)
+            provider = "Claude" if self.claude_api_key else "OpenAI"
+            model_name = self.claude_model if self.claude_api_key else self.ai_model
+            if self.ai_commentary_enabled and has_key:
+                self.ai_status.setText(f"AI: aktiv ({provider} / {model_name})")
+            elif has_key:
+                self.ai_status.setText(f"AI: kulcs beallitva ({provider} / {model_name})")
             else:
                 self.ai_status.setText("AI: kikapcsolva")
 
@@ -3136,12 +3341,14 @@ if QT_AVAILABLE:
                         self.log_alert(msg)
                         self.trigger_alert_channels(msg)
                     self.output.append(format_result(result, currency=currency) + "\n")
-                    if self.ai_commentary_enabled and self.ai_api_key:
+                    if self.ai_commentary_enabled and (self.ai_api_key or self.claude_api_key):
                         ai_text, ai_err = get_ai_commentary(
                             result=result,
                             currency=currency,
                             api_key=self.ai_api_key,
                             model=self.ai_model,
+                            claude_api_key=self.claude_api_key,
+                            claude_model=self.claude_model,
                         )
                         if ai_text:
                             self.output.append("AI magyarazat:\n" + ai_text + "\n")
@@ -3291,6 +3498,24 @@ def parse_args():
         type=float,
         default=1.0,
         help="Értesítési küszöb százalékban, pl. 1.5 (alap: 1.0).",
+    )
+    parser.add_argument(
+        "--claude-key",
+        type=str,
+        default=None,
+        help="Anthropic Claude API kulcs az AI kommentárhoz (elsőbbséget élvez az OpenAI előtt).",
+    )
+    parser.add_argument(
+        "--claude-model",
+        type=str,
+        default=ANTHROPIC_MODEL_DEFAULT,
+        help=f"Claude modell azonosító (alap: {ANTHROPIC_MODEL_DEFAULT}).",
+    )
+    parser.add_argument(
+        "--openai-key",
+        type=str,
+        default=None,
+        help="OpenAI API kulcs az AI kommentárhoz.",
     )
     return parser.parse_args()
 
