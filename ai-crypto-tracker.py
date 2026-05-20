@@ -381,8 +381,6 @@ except Exception as e:
     QT_AVAILABLE = False
     QT_IMPORT_ERROR = e
 
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import train_test_split
 
 # ---- ESZKÖZÖK ----
 ASSETS = {
@@ -492,6 +490,7 @@ CUSTOM_ALERTS_PATH = APP_STATE_DIR / "custom_alerts.json"
 TELEGRAM_CONFIG_PATH = APP_STATE_DIR / "telegram_config.json"
 APP_CONFIG_PATH = APP_STATE_DIR / "app_config.json"
 HOLDINGS_PATH  = APP_STATE_DIR / "holdings.json"
+SESSION_STATE_PATH = APP_STATE_DIR / "session.json"
 
 _current_lang = "hu"  # module-level so format_result can use it
 
@@ -1268,6 +1267,24 @@ def save_app_config(lang, theme):
     )
 
 
+def load_session_state():
+    ensure_app_state_dir()
+    if not SESSION_STATE_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(SESSION_STATE_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
+
+
+def save_session_state(data: dict):
+    ensure_app_state_dir()
+    SESSION_STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def load_holdings():
     ensure_app_state_dir()
     if not HOLDINGS_PATH.is_file():
@@ -1712,6 +1729,9 @@ FEATURE_NAMES = [
 
 
 def predict(prices, volumes=None):
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.model_selection import train_test_split
+
     X, y = build_features_and_labels(prices, volumes=volumes)
     if X.shape[0] < 80:
         raise ValueError("Túl kevés minta a tanításhoz.")
@@ -3579,23 +3599,79 @@ if QT_AVAILABLE:
             content_row.addLayout(right)
             main_vbox.addLayout(content_row)
             self.setLayout(main_vbox)
+            # ---- Restore session state ----
+            session = load_session_state()
+            if "invest_amount" in session and session["invest_amount"] is not None:
+                self.invest_amount = session["invest_amount"]
+            if "live_interval_sec" in session:
+                self.live_interval_sec = int(session["live_interval_sec"])
+            if "alert_threshold_pct" in session:
+                self.alert_threshold_pct = float(session["alert_threshold_pct"])
+            if "auto_clear_analysis" in session:
+                self.auto_clear_analysis = bool(session["auto_clear_analysis"])
+            if "sound_alerts_enabled" in session:
+                self.sound_alerts_enabled = bool(session["sound_alerts_enabled"])
+            if "csv_autosave_enabled" in session:
+                self.csv_autosave_enabled = bool(session["csv_autosave_enabled"])
+            if "csv_path" in session:
+                self.csv_path = str(session["csv_path"])
+            self.auto_clear_checkbox.setChecked(self.auto_clear_analysis)
+            self.sound_alert_checkbox.setChecked(self.sound_alerts_enabled)
+            self.csv_autosave_checkbox.setChecked(self.csv_autosave_enabled)
+            if "schedule_enabled" in session:
+                self.cb_schedule_analysis.setChecked(bool(session["schedule_enabled"]))
+            if "schedule_time" in session:
+                parts = str(session["schedule_time"]).split(":")
+                if len(parts) == 2:
+                    try:
+                        self.time_schedule.setTime(QTime(int(parts[0]), int(parts[1])))
+                    except (ValueError, TypeError):
+                        pass
+            if "geometry" in session:
+                g = session["geometry"]
+                try:
+                    self.setGeometry(int(g["x"]), int(g["y"]), int(g["w"]), int(g["h"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+            # Connect signals
             self.list_widget.itemSelectionChanged.connect(self.update_selected_count)
             self.list_widget.itemSelectionChanged.connect(self.refresh_price_chart)
+
+            # Restore selected assets (block signals to avoid premature chart refresh)
+            if "selected_assets" in session and session["selected_assets"]:
+                saved_sel = set(session["selected_assets"])
+                self.list_widget.blockSignals(True)
+                self.list_widget.clearSelection()
+                for i in range(self.list_widget.count()):
+                    item = self.list_widget.item(i)
+                    if item and item.text() in saved_sel:
+                        item.setSelected(True)
+                self.list_widget.blockSignals(False)
+
+            # Restore active tab
+            if "active_tab" in session:
+                self.stacked.setCurrentIndex(int(session.get("active_tab", 0)))
+
             self.update_selected_count()
             self.refresh_telegram_status()
             self.refresh_ai_status()
-            self.refresh_price_chart()
             self.retranslate_ui()
 
             # F5 shortcut
             sc = QShortcut(QKeySequence("F5"), self)
             sc.activated.connect(self.run_analysis)
 
-            # Fear & Greed: fetch async on startup
+            # Fear & Greed and chart: fetch async after window is shown
             self._fng_timer = QTimer(self)
             self._fng_timer.setSingleShot(True)
             self._fng_timer.timeout.connect(self._fetch_fng)
             self._fng_timer.start(800)
+
+            self._startup_chart_timer = QTimer(self)
+            self._startup_chart_timer.setSingleShot(True)
+            self._startup_chart_timer.timeout.connect(self.refresh_price_chart)
+            self._startup_chart_timer.start(400)
 
             # RGB animation
             self._rgb_hue = 0
@@ -3617,6 +3693,32 @@ if QT_AVAILABLE:
             self._out_fade = QPropertyAnimation(self._out_opacity, b"opacity")
             self._out_fade.setDuration(400)
             self._out_fade.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        def closeEvent(self, event):
+            self._save_session_state()
+            super().closeEvent(event)
+
+        def _save_session_state(self):
+            data = {
+                "invest_amount": self.invest_amount,
+                "live_interval_sec": self.live_interval_sec,
+                "alert_threshold_pct": self.alert_threshold_pct,
+                "auto_clear_analysis": self.auto_clear_analysis,
+                "sound_alerts_enabled": self.sound_alerts_enabled,
+                "csv_autosave_enabled": self.csv_autosave_enabled,
+                "csv_path": self.csv_path,
+                "schedule_enabled": self.cb_schedule_analysis.isChecked(),
+                "schedule_time": self.time_schedule.time().toString("HH:mm"),
+                "selected_assets": [i.text() for i in self.list_widget.selectedItems()],
+                "active_tab": self.stacked.currentIndex(),
+                "geometry": {
+                    "x": self.x(),
+                    "y": self.y(),
+                    "w": self.width(),
+                    "h": self.height(),
+                },
+            }
+            save_session_state(data)
 
         def resizeEvent(self, e):
             super().resizeEvent(e)
