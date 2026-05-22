@@ -50,7 +50,7 @@ pip install pyinstaller
 cd LOCATION WHERE YOU DOWNLOADED
 ```
 ```bash
-pyinstaller ai-cryto-tracker.py
+pyinstaller --onefile --windowed --icon=crypto_icon.ico --add-data "crypto_icon.png;." ai-crypto-tracker.py
 ```
 3. wait for the download ends
 4. open the folder "dist"
