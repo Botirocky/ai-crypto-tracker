@@ -55,4 +55,5 @@ pyinstaller --onefile --windowed --icon=crypto_icon.ico --add-data "crypto_icon.
 3. wait for the download ends
 4. open the folder "dist"
 5. run the EXE
-<img width="1337" height="696" alt="kép" src="https://github.com/user-attachments/assets/c420e145-097e-4cec-825a-84623e0029dc" />
+<img width="1272" height="654" alt="kép" src="https://github.com/user-attachments/assets/e4f26919-4a47-4ca7-8ae6-ee59e953d88a" />
+
