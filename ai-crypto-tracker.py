@@ -524,8 +524,8 @@ TRANSLATIONS = {
         "btn_live_start": "📡  Élő mód indítása",
         "btn_live_stop": "⏹  Élő mód leállítása",
         "btn_interval": "⏱  Időköz: {n}s",
-        "live_off": "🔴  Élő mód: kikapcsolva",
-        "live_on": "🟢  Élő mód: fut ({n}s)",
+        "live_off": "Élő mód: kikapcsolva",
+        "live_on": "Élő mód: fut ({n}s)",
         "auto_clear": "Elemzés törlése minden frissítés előtt",
         "sound_alerts": "Hangriasztás engedélyezve",
         "csv_autosave": "CSV automatikus mentés élőben",
@@ -643,8 +643,8 @@ TRANSLATIONS = {
         "btn_live_start": "📡  Start live mode",
         "btn_live_stop": "⏹  Stop live mode",
         "btn_interval": "⏱  Interval: {n}s",
-        "live_off": "🔴  Live mode: off",
-        "live_on": "🟢  Live mode: running ({n}s)",
+        "live_off": "Live mode: off",
+        "live_on": "Live mode: running ({n}s)",
         "auto_clear": "Clear analysis before each refresh",
         "sound_alerts": "Sound alerts enabled",
         "csv_autosave": "CSV auto-save in live mode",
@@ -761,8 +761,8 @@ TRANSLATIONS = {
         "btn_live_start": "📡  Live-Modus starten",
         "btn_live_stop": "⏹  Live-Modus stoppen",
         "btn_interval": "⏱  Intervall: {n}s",
-        "live_off": "🔴  Live-Modus: aus",
-        "live_on": "🟢  Live-Modus: läuft ({n}s)",
+        "live_off": "Live-Modus: aus",
+        "live_on": "Live-Modus: läuft ({n}s)",
         "auto_clear": "Analyse vor jeder Aktualisierung löschen",
         "sound_alerts": "Ton-Benachrichtigungen aktiviert",
         "csv_autosave": "CSV-Autospeicherung im Live-Modus",
@@ -1440,6 +1440,68 @@ def build_extended_metrics(prices, volumes):
     }
 
 
+def rolling_bollinger(closes, window=20, n_std=2.0):
+    """Gördülő Bollinger-sávok. Visszaad: (upper, mid, lower) np.array-ek,
+    NaN-nal ahol még nincs elég adat — diagram overlay-hez."""
+    arr = np.asarray(closes, dtype=float)
+    n = arr.size
+    upper = np.full(n, np.nan)
+    mid = np.full(n, np.nan)
+    lower = np.full(n, np.nan)
+    if n < window:
+        return upper, mid, lower
+    for i in range(window - 1, n):
+        w = arr[i - window + 1:i + 1]
+        mu = float(np.mean(w))
+        sd = float(np.std(w))
+        mid[i] = mu
+        upper[i] = mu + n_std * sd
+        lower[i] = mu - n_std * sd
+    return upper, mid, lower
+
+
+def rolling_rsi(closes, period=14):
+    """Wilder-simítású RSI idősor (NaN ahol még nincs elég adat)."""
+    arr = np.asarray(closes, dtype=float)
+    n = arr.size
+    out = np.full(n, np.nan)
+    if n < period + 1:
+        return out
+    deltas = np.diff(arr)
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+
+    def _rsi(ag, al):
+        if al == 0:
+            return 100.0 if ag > 0 else 50.0
+        rs = ag / al
+        return 100.0 - 100.0 / (1.0 + rs)
+
+    out[period] = _rsi(avg_gain, avg_loss)
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        out[i + 1] = _rsi(avg_gain, avg_loss)
+    return out
+
+
+def rolling_macd(closes):
+    """MACD vonal / jelvonal / histogram teljes idősora."""
+    arr = np.asarray(closes, dtype=float)
+    n = arr.size
+    if n < 35:
+        nan = np.full(n, np.nan)
+        return nan, nan.copy(), nan.copy()
+    ema12 = ema_np(arr, 12)
+    ema26 = ema_np(arr, 26)
+    line = ema12 - ema26
+    signal = ema_np(line, 9)
+    hist = line - signal
+    return line, signal, hist
+
+
 def correlation_matrix_log_returns(asset_items, rate, display_currency, timeout=REQUEST_TIMEOUT):
     series = []
     names = []
@@ -2045,28 +2107,72 @@ def notify_price_change(title, message):
 
 
 def send_telegram_message(bot_token, chat_id, message, timeout=REQUEST_TIMEOUT, parse_mode="HTML"):
-    if not bot_token or not chat_id:
+    # Toleráljuk a beillesztési hibákat: whitespace és felesleges "bot" előtag.
+    token = (bot_token or "").strip()
+    if token.lower().startswith("bot"):
+        token = token[3:]
+    chat = str(chat_id or "").strip()
+    if not token or not chat:
         return False, "Hiányzó Telegram token/chat_id"
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": parse_mode}
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    def _send(pm):
+        payload = {"chat_id": chat, "text": message, "disable_web_page_preview": True}
+        if pm:
+            payload["parse_mode"] = pm
+        r = http_post(url, timeout=timeout, data=payload)
+        try:
+            return r, r.json()
+        except ValueError:
+            return r, {}
+
     try:
-        r = requests.post(url, data=payload, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
+        r, data = _send(parse_mode)
+        # Ha a HTML formázás miatt 400-at kapunk, próbáljuk sima szövegként.
+        if r.status_code == 400 and parse_mode:
+            r2, data2 = _send(None)
+            if data2.get("ok"):
+                return True, None
+            desc = data.get("description") or (r.text or "")[:200]
+            return False, f"Telegram 400: {desc}"
+        if r.status_code == 401:
+            return False, "Telegram 401: érvénytelen bot token."
+        if r.status_code == 404:
+            return False, "Telegram 404: a bot nem található (hibás token)."
         if not data.get("ok"):
-            return False, str(data)
+            desc = data.get("description") if isinstance(data, dict) else None
+            return False, desc or f"HTTP {r.status_code}: {(r.text or '')[:200]}"
         return True, None
     except (requests.RequestException, ValueError, TypeError) as e:
         return False, str(e)
 
 
+def _fmt_price(value):
+    """Format a price with appropriate decimal places regardless of magnitude."""
+    v = float(value)
+    if v == 0:
+        return "0"
+    abs_v = abs(v)
+    if abs_v >= 1000:
+        return f"{v:,.0f}"
+    if abs_v >= 1:
+        return f"{v:,.2f}"
+    if abs_v >= 0.01:
+        return f"{v:.4f}"
+    if abs_v >= 0.0001:
+        return f"{v:.6f}"
+    return f"{v:.8f}"
+
+
 def format_telegram_result(result, currency="HUF"):
     """Format a single asset result as a rich Telegram HTML message."""
     decision = str(result.get("decision", ""))
-    if "VÉTEL" in decision or "VETEL" in decision:
+    # Match buy/sell signals across all supported languages (HU/EN/DE)
+    _dec_up = decision.upper()
+    if any(kw in _dec_up for kw in ("VÉTEL", "VETEL", "BUY", "KAUF")):
         signal_emoji = "📈"
         signal_color = "✅"
-    elif "ELADÁS" in decision or "ELADAS" in decision:
+    elif any(kw in _dec_up for kw in ("ELADÁS", "ELADAS", "SELL", "VERKAUF")):
         signal_emoji = "📉"
         signal_color = "🔴"
     else:
@@ -2085,20 +2191,23 @@ def format_telegram_result(result, currency="HUF"):
     if dcp is not None:
         arrow = "▲" if dcp >= 0 else "▼"
         lines.append(f"📊 Napi változás: <b>{arrow} {dcp:+.2f}%</b>")
-    lines.append(f"💰 Ár: <b>{int(result['current']):,} {currency}</b>")
-    lines.append(f"🎯 AI célár (1h): <b>{int(result['future']):,} {currency}</b>")
+    lines.append(f"💰 Ár: <b>{_fmt_price(result['current'])} {currency}</b>")
+    lines.append(f"🎯 AI célár (1h): <b>{_fmt_price(result['future'])} {currency}</b>")
     lines.append(f"🤖 AI valószínűség fel: <b>{result['next_up_prob'] * 100:.1f}%</b>")
     lines.append(f"📐 RSI: <b>{result['rsi']:.1f}</b>")
     lines.append(f"{signal_color} Döntés: <b>{html.escape(decision)}</b>")
     lines.append(f"💼 Ajánlás: <b>{html.escape(str(rec.get('action', '-')))}</b> ({html.escape(str(rec.get('side', '-')))})")
     lines.append(f"🎲 Bizalom: <b>{rec.get('confidence', 0) * 100:.1f}%</b>")
-    if rec.get("side") != "NEUTRAL":
-        lines.append(f"🚫 Stop-loss: {int(rec.get('stop', 0)):,} {currency}")
-        lines.append(f"✨ Take-profit: {int(rec.get('take_profit', 0)):,} {currency}")
+    if rec.get("side") not in ("NEUTRAL", "NEUTRAL"):
+        stop_val = rec.get("stop", 0)
+        tp_val = rec.get("take_profit", 0)
+        if stop_val and stop_val != rec.get("entry"):
+            lines.append(f"🚫 Stop-loss: {_fmt_price(stop_val)} {currency}")
+            lines.append(f"✨ Take-profit: {_fmt_price(tp_val)} {currency}")
     inv = result.get("investment")
     if inv:
         lines.append(
-            f"💵 Javasolt tét: <b>{int(inv['deploy_amount']):,} {currency}</b> "
+            f"💵 Javasolt tét: <b>{_fmt_price(inv['deploy_amount'])} {currency}</b> "
             f"({inv['deploy_frac'] * 100:.0f}%)"
         )
     return "\n".join(lines)
@@ -2280,6 +2389,37 @@ def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, tim
         return None, str(e)
 
 
+def get_claude_cli_commentary(result, currency, model=None, timeout=90):
+    """AI kommentár a helyi 'claude' CLI-n (Claude Code) keresztül, headless módban.
+    Az előfizetéses (OAuth) bejelentkezést használja — nem kell API-kulcs/kredit."""
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return None, "A 'claude' parancs nem található. Telepítsd/jelentkezz be a Claude Code-ba."
+    prompt = _build_ai_prompt(result, currency)
+    cmd = [claude_bin, "-p", prompt, "--output-format", "text"]
+    if model:
+        cmd += ["--model", model]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(Path.home()),  # semleges könyvtár, ne húzzon be projekt-kontextust
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "ismeretlen hiba").strip()
+            return None, f"claude CLI hiba: {err[:300]}"
+        out = (proc.stdout or "").strip()
+        if not out:
+            return None, "Üres válasz a claude CLI-től."
+        return out, None
+    except subprocess.TimeoutExpired:
+        return None, f"Időtúllépés ({timeout}s) a claude CLI hívásakor."
+    except Exception as e:
+        return None, str(e)
+
+
 def monitor_price_changes(selected_assets, interval_sec=60, threshold_pct=1.0):
     print(
         f"Árfigyelés indul | időköz: {interval_sec}s | értesítési küszöb: {threshold_pct:.2f}%"
@@ -2403,13 +2543,13 @@ def detect_patterns(candles, mult=1.0):
             if m2 - m1 < order * 2:
                 continue
             h1, h2 = arr[m1], arr[m2]
-            # A két csúcs legyen közel azonos (max 3% különbség)
-            if abs(h1 - h2) / max(h1, h2) > 0.03:
+            # A két csúcs legyen közel azonos (max 5% különbség)
+            if abs(h1 - h2) / max(h1, h2) > 0.05:
                 continue
-            # Köztük legyen egy völgy legalább 1.5%-kal lejjebb
+            # Köztük legyen egy völgy legalább 1.0%-kal lejjebb
             valley = arr[m1:m2 + 1].min()
             avg_top = (h1 + h2) / 2
-            if (avg_top - valley) / avg_top < 0.015:
+            if (avg_top - valley) / avg_top < 0.010:
                 continue
             patterns.append({
                 "type": "M",
@@ -2434,11 +2574,11 @@ def detect_patterns(candles, mult=1.0):
             if b2 - b1 < order * 2:
                 continue
             l1, l2 = arr[b1], arr[b2]
-            if abs(l1 - l2) / max(l1, l2) > 0.03:
+            if abs(l1 - l2) / max(l1, l2) > 0.05:
                 continue
             peak = arr[b1:b2 + 1].max()
             avg_bot = (l1 + l2) / 2
-            if (peak - avg_bot) / avg_bot < 0.015:
+            if (peak - avg_bot) / avg_bot < 0.010:
                 continue
             patterns.append({
                 "type": "W",
@@ -2463,7 +2603,7 @@ def detect_patterns(candles, mult=1.0):
     if 2 <= bot_i <= window - 3:
         left_drop  = (seg[0] - seg[bot_i]) / seg[0] if seg[0] > 0 else 0
         right_rise = (seg[-1] - seg[bot_i]) / seg[bot_i] if seg[bot_i] > 0 else 0
-        if left_drop > 0.02 and right_rise > 0.02:
+        if left_drop > 0.012 and right_rise > 0.012:
             abs_bot = n - window + bot_i
             patterns.append({
                 "type": "V",
@@ -2484,7 +2624,7 @@ def detect_patterns(candles, mult=1.0):
     if 2 <= top_i <= window - 3:
         left_rise = (seg[top_i] - seg[0]) / seg[0] if seg[0] > 0 else 0
         right_drop = (seg[top_i] - seg[-1]) / seg[top_i] if seg[top_i] > 0 else 0
-        if left_rise > 0.02 and right_drop > 0.02:
+        if left_rise > 0.012 and right_drop > 0.012:
             abs_top = n - window + top_i
             patterns.append({
                 "type": "inv_V",
@@ -2498,6 +2638,91 @@ def detect_patterns(candles, mult=1.0):
                 "end_idx": n - 1,
                 "direction": "bearish",
                 "color": "#ef4444",
+            })
+
+    # --- Fej-váll (Head & Shoulders, medvés) ---
+    # Három maximum, ahol a középső (fej) magasabb, a két váll közel azonos.
+    if len(maxima) >= 3:
+        for i in range(len(maxima) - 2):
+            a, b, c = maxima[i], maxima[i + 1], maxima[i + 2]
+            ha, hb, hc = arr[a], arr[b], arr[c]
+            if hb > ha and hb > hc and \
+               abs(ha - hc) / max(ha, hc) < 0.04 and \
+               (hb - max(ha, hc)) / hb > 0.012:
+                patterns.append({
+                    "type": "HS",
+                    "label": "Fej-váll",
+                    "emoji": "🔻",
+                    "desc": (
+                        f"Fej-váll alakzat: fej {hb * mult:.2f}, vállak "
+                        f"{ha * mult:.2f} / {hc * mult:.2f}. Medvés fordulójel."
+                    ),
+                    "start_idx": a,
+                    "end_idx": c,
+                    "direction": "bearish",
+                    "color": "#ef4444",
+                })
+                break
+
+    # --- Fordított Fej-váll (Inverse H&S, bullish) ---
+    if len(minima) >= 3:
+        for i in range(len(minima) - 2):
+            a, b, c = minima[i], minima[i + 1], minima[i + 2]
+            la, lb, lc = arr[a], arr[b], arr[c]
+            if lb < la and lb < lc and \
+               abs(la - lc) / max(la, lc) < 0.04 and \
+               (min(la, lc) - lb) / min(la, lc) > 0.012:
+                patterns.append({
+                    "type": "iHS",
+                    "label": "Fordított fej-váll",
+                    "emoji": "🔼",
+                    "desc": (
+                        f"Fordított fej-váll: fej {lb * mult:.2f}, vállak "
+                        f"{la * mult:.2f} / {lc * mult:.2f}. Bullish fordulójel."
+                    ),
+                    "start_idx": a,
+                    "end_idx": c,
+                    "direction": "bullish",
+                    "color": "#22c55e",
+                })
+                break
+
+    # --- Háromszög formációk (a maximumok/minimumok meredeksége alapján) ---
+    def _slope_pct(idxs):
+        if len(idxs) < 2:
+            return None
+        xs = np.array(idxs, dtype=float)
+        ys = arr[np.array(idxs)]
+        base = float(np.mean(ys)) or 1.0
+        return float(np.polyfit(xs, ys, 1)[0]) / base * 100.0  # %/gyertya
+
+    recent_max = [m for m in maxima if m >= n * 0.4]
+    recent_min = [m for m in minima if m >= n * 0.4]
+    sl_max = _slope_pct(recent_max)
+    sl_min = _slope_pct(recent_min)
+    if sl_max is not None and sl_min is not None and len(recent_max) >= 2 and len(recent_min) >= 2:
+        flat = 0.05  # %/gyertya alatti meredekség "vízszintes"
+        tri_start = min(recent_max[0], recent_min[0])
+        if abs(sl_max) < flat and sl_min > flat:
+            patterns.append({
+                "type": "tri_asc", "label": "Emelkedő háromszög", "emoji": "📐",
+                "desc": "Emelkedő háromszög: lapos ellenállás, emelkedő mélypontok — bullish.",
+                "start_idx": tri_start, "end_idx": n - 1,
+                "direction": "bullish", "color": "#22c55e",
+            })
+        elif abs(sl_min) < flat and sl_max < -flat:
+            patterns.append({
+                "type": "tri_desc", "label": "Csökkenő háromszög", "emoji": "📐",
+                "desc": "Csökkenő háromszög: lapos támasz, csökkenő csúcsok — bearish.",
+                "start_idx": tri_start, "end_idx": n - 1,
+                "direction": "bearish", "color": "#ef4444",
+            })
+        elif sl_max < -flat and sl_min > flat:
+            patterns.append({
+                "type": "tri_sym", "label": "Szimmetrikus háromszög", "emoji": "📐",
+                "desc": "Szimmetrikus háromszög: szűkülő sáv — kitörés várható.",
+                "start_idx": tri_start, "end_idx": n - 1,
+                "direction": "neutral", "color": "#f59e0b",
             })
 
     # Deduplikáció: ha ugyanolyan típusú alakzat van, csak az utolsót tartjuk
@@ -2601,7 +2826,7 @@ def _sig_colors(decision, dark=True):
 
 
 def format_result_html(result, currency="HUF", dark=True):
-    """Return a clean, simple HTML card for one asset result."""
+    """Részletes HTML kártya egy eszköz elemzéséhez — minden elérhető adattal."""
     decision = result.get("decision", "")
     rec      = result.get("recommendation", {})
     m        = result.get("metrics") or {}
@@ -2611,10 +2836,25 @@ def format_result_html(result, currency="HUF", dark=True):
     dim   = "#9ca3af" if dark else "#6b7280"
     tbord = "#374151" if dark else "#d0d7de"
 
+    def L(hu, en, de=None):
+        return {"hu": hu, "en": en, "de": de or en}.get(_current_lang, en)
+
     def fp(v):
-        if v is None: return "–"
+        if v is None:
+            return "–"
+        return f"{_fmt_price(v)} {currency}"
+
+    def fvol(v):
+        if v is None:
+            return "–"
         v = float(v)
-        return f"{v:,.0f} {currency}" if abs(v) >= 100 else f"{v:.6f} {currency}"
+        if abs(v) >= 1e9:
+            return f"{v/1e9:.2f}B"
+        if abs(v) >= 1e6:
+            return f"{v/1e6:.2f}M"
+        if abs(v) >= 1e3:
+            return f"{v/1e3:.1f}K"
+        return f"{v:,.0f}"
 
     def row(lbl, val, lbl2="", val2="", vc=text, vc2=None):
         vc2 = vc2 or text
@@ -2626,7 +2866,17 @@ def format_result_html(result, currency="HUF", dark=True):
                 f'<td style="color:{vc};padding:3px 20px 3px 0"><b>{html.escape(str(val))}</b></td>'
                 f'{td2}</tr>')
 
-    # ── values ──
+    def section(title):
+        return (f'<tr><td colspan="4" style="padding:7px 0 2px;border-top:1px solid {tbord};'
+                f'color:{dim};font-size:10px;letter-spacing:.06em;text-transform:uppercase">'
+                f'{html.escape(title)}</td></tr>')
+
+    def fullrow(label, content_html, lbl_col=None):
+        lc = lbl_col or dim
+        return (f'<tr><td colspan="4" style="padding:3px 0;font-size:11px;color:{text}">'
+                f'<span style="color:{lc}">{html.escape(label)}:</span> {content_html}</td></tr>')
+
+    # ── header values ──
     dcp     = result.get("day_change_pct")
     dcp_str = (f"{'▲' if dcp >= 0 else '▼'} {dcp:+.2f}%" if dcp is not None else "")
     dcp_col = "#22c55e" if (dcp or 0) >= 0 else "#ef4444"
@@ -2638,9 +2888,15 @@ def format_result_html(result, currency="HUF", dark=True):
     macd_h   = m.get("macd_hist")
     macd_col = "#22c55e" if (macd_h or 0) > 0 else "#ef4444"
     macd_str = f"{macd_h:+.4f}" if macd_h is not None else "–"
+    macd_line = m.get("macd_line")
+    macd_sig  = m.get("macd_signal")
+    macd_ls   = (f"{macd_line:+.4f} / {macd_sig:+.4f}"
+                 if macd_line is not None and macd_sig is not None else "–")
 
     rvol = m.get("realized_vol_annual_pct")
     rvol_str = f"{rvol:.1f}%" if rvol is not None else "–"
+    mdd = m.get("max_drawdown_pct")
+    mdd_str = f"{mdd:.2f}%" if mdd is not None else "–"
 
     rec_side = rec.get("side", "")
     neutral  = _tr("side_neutral")
@@ -2649,42 +2905,102 @@ def format_result_html(result, currency="HUF", dark=True):
     cross     = result.get("ma_cross") or {}
     cross_tag = ""
     if cross.get("type") == "golden_cross":
-        cross_tag = f'&nbsp;<span style="background:#22c55e;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">✨ Golden Cross</span>'
+        cross_tag = '&nbsp;<span style="background:#22c55e;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">✨ Golden Cross</span>'
     elif cross.get("type") == "death_cross":
-        cross_tag = f'&nbsp;<span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">☠️ Death Cross</span>'
+        cross_tag = '&nbsp;<span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">☠️ Death Cross</span>'
 
-    # ── support / resistance (compact) ──
+    # ── árszintek szekció ──
+    so = result.get("session_open")
+    pc = result.get("previous_close")
+    open_prev_html = ""
+    if so is not None or pc is not None:
+        open_prev_html = row(L("Mai nyitás", "Open", "Eröffnung"), fp(so),
+                             L("Előző záró", "Prev close", "Vortagesschluss"), fp(pc))
+
+    # ── Bollinger ──
+    bb_u, bb_m, bb_l = m.get("bb_upper"), m.get("bb_mid"), m.get("bb_lower")
+    bb_html = ""
+    if bb_u is not None:
+        bb_html = row(L("BB felső", "BB upper", "BB oben"), fp(bb_u),
+                      L("BB alsó", "BB lower", "BB unten"), fp(bb_l), "#818cf8", "#818cf8")
+        bb_html += row(L("BB közép", "BB mid", "BB Mitte"), fp(bb_m))
+
+    # ── forgalom ──
+    vlast = m.get("volume_last")
+    vratio = m.get("volume_vs_sma")
+    vol_html = ""
+    if vlast is not None and vlast > 0:
+        vr_str = f"{vratio:.2f}×" if vratio is not None else "–"
+        vr_col = "#22c55e" if (vratio or 0) >= 1 else dim
+        vol_html = row(L("Forgalom", "Volume", "Volumen"), fvol(vlast),
+                       L("vs 20-átlag", "vs 20-avg", "vs 20-Schnitt"), vr_str, text, vr_col)
+
+    # ── MA kereszt szint ──
+    cross_html = ""
+    if cross.get("fast") is not None and cross.get("slow") is not None:
+        cross_html = row(f"MA{cross.get('fast_n','')}", fp(cross.get("fast")),
+                         f"MA{cross.get('slow_n','')}", fp(cross.get("slow")))
+
+    # ── jelzéspontszámok ──
+    sb, ss = result.get("sig_buy"), result.get("sig_sell")
+    sig_html = ""
+    if sb is not None and ss is not None:
+        sig_html = row(L("Vételi pont", "Buy score", "Kaufpunkte"), f"{sb:.1f}",
+                       L("Eladási pont", "Sell score", "Verkaufspunkte"), f"{ss:.1f}",
+                       "#22c55e", "#ef4444")
+
+    # ── top AI jellemzők ──
+    feat = result.get("feat_imp") or []
+    feat_html = ""
+    if feat:
+        chips = "  ".join(
+            f'<span style="color:{text}">{html.escape(str(n))}</span> '
+            f'<span style="color:{dim}">{v*100:.0f}%</span>'
+            for n, v in feat[:5]
+        )
+        feat_html = fullrow(L("Top AI jellemzők", "Top AI features", "Top KI-Merkmale"), chips)
+
+    # ── indokok ──
+    reasons = rec.get("reasons") or []
+    reasons_html = ""
+    if reasons:
+        reasons_html = fullrow(L("Indok", "Reasons", "Begründung"),
+                               " · ".join(html.escape(str(r)) for r in reasons))
+
+    # ── support / resistance ──
     supports   = result.get("support", [])
     resistance = result.get("resistance", [])
     sr_html = ""
     if supports or resistance:
-        lbl_s = {"hu": "Támasz", "en": "Support", "de": "Stütze"}.get(_current_lang, "Support")
-        lbl_r = {"hu": "Ellenállás", "en": "Resistance", "de": "Widerstand"}.get(_current_lang, "Resistance")
-        s_val = "  ".join(fp(s) for s in supports[:2]) or "–"
-        r_val = "  ".join(fp(r) for r in resistance[:2]) or "–"
-        sr_html = row(lbl_s, s_val, lbl_r, r_val, "#22c55e", "#ef4444")
+        s_val = "  ".join(fp(s) for s in supports[:3]) or "–"
+        r_val = "  ".join(fp(r) for r in resistance[:3]) or "–"
+        sr_html = (row(L("Támasz", "Support", "Stütze"), s_val, "", "", "#22c55e")
+                   + row(L("Ellenállás", "Resistance", "Widerstand"), r_val, "", "", "#ef4444"))
 
     # ── investment ──
     inv     = result.get("investment") or {}
     inv_html = ""
-    if inv.get("deploy_amount", 0) > 0:
-        lbl = {"hu": "Javasolt tét", "en": "Suggested", "de": "Empfohlen"}.get(_current_lang, "Suggested")
-        inv_html = (f'<tr><td colspan="4" style="padding:4px 0 2px;border-top:1px solid {tbord}">'
-                    f'<span style="color:{dim};font-size:11px">{lbl}: </span>'
-                    f'<b style="color:{border}">{fp(inv["deploy_amount"])}</b>'
-                    f'<span style="color:{dim};font-size:11px"> ({inv["deploy_frac"]*100:.0f}%)'
-                    + (f' — {html.escape(inv["verdict"])}' if inv.get("verdict") else "")
-                    + '</span></td></tr>')
+    if inv:
+        cap = inv.get("amount")
+        if cap is not None:
+            inv_html += row(L("Tőke", "Capital", "Kapital"), fp(cap),
+                            L("Javasolt tét", "Suggested", "Empfohlen"),
+                            f'{fp(inv.get("deploy_amount"))} ({inv.get("deploy_frac",0)*100:.0f}%)',
+                            text, border)
+        if inv.get("verdict"):
+            inv_html += fullrow(L("Vélemény", "Verdict", "Urteil"), html.escape(inv["verdict"]))
+        if inv.get("fx_note"):
+            inv_html += fullrow(L("Árfolyam", "FX", "FX"), html.escape(inv["fx_note"]))
 
     # ── holdings ──
     qty = result.get("holding_qty") or 0
     hold_html = ""
     if qty > 0:
         val = qty * float(result.get("current", 0))
-        lbl = {"hu": "Portfólió", "en": "Portfolio", "de": "Portfolio"}.get(_current_lang, "Portfolio")
-        hold_html = (f'<tr><td colspan="4" style="padding:2px 0;color:{dim};font-size:11px">'
-                     f'{lbl}: <b style="color:#38bdf8">{qty:g} × {fp(result["current"])} = {fp(val)}</b>'
-                     f'</td></tr>')
+        hold_html = fullrow(
+            L("Portfólió", "Portfolio", "Portfolio"),
+            f'<b style="color:#38bdf8">{qty:g} × {fp(result["current"])} = {fp(val)}</b>',
+        )
 
     # ── AI commentary ──
     ai_text = result.get("ai_commentary", "")
@@ -2708,22 +3024,39 @@ def format_result_html(result, currency="HUF", dark=True):
       <span style="background:{badge};color:#fff;padding:2px 10px;border-radius:4px;font-weight:700">{html.escape(decision)}</span>
     </td>
   </tr></table>
-  <div style="border-top:1px solid {tbord};margin:6px 0 4px"></div>
   <table width="100%" cellspacing="0" cellpadding="0">
-    {row("Ár" if _current_lang=="hu" else "Price", fp(result.get("current")),
-         "AI célár" if _current_lang=="hu" else "AI target", fp(result.get("future")), text, "#38bdf8")}
+    {section(L("Ár", "Price", "Kurs"))}
+    {row(L("Most", "Now", "Aktuell"), fp(result.get("current")),
+         L("AI célár (1h)", "AI target (1h)", "KI-Ziel (1h)"), fp(result.get("future")), text, "#38bdf8")}
+    {open_prev_html}
+    {row(L("MA(20)", "MA(20)", "MA(20)"), fp(result.get("ma")),
+         L("Napi vált.", "Daily chg", "Tagesänd."),
+         (f"{dcp:+.2f}%" if dcp is not None else "–"), text, dcp_col)}
+    {section(L("AI modell", "AI model", "KI-Modell"))}
+    {row(L("Esély fel", "Prob up", "Wahrsch. auf"), f"{result.get('next_up_prob',0)*100:.1f}%",
+         L("Pontosság", "Accuracy", "Genauigkeit"), f"{result.get('accuracy',0)*100:.1f}%", "#38bdf8")}
+    {feat_html}
+    {section(L("Indikátorok / kockázat", "Indicators / risk", "Indikatoren / Risiko"))}
     {row(f"RSI", f"{rsi:.1f}{rsi_tag}",
-         "AI esély" if _current_lang=="hu" else "AI prob", f"{result.get('next_up_prob',0)*100:.1f}%", rsi_col)}
-    {row("MACD", macd_str,
-         "Volatilitás" if _current_lang=="hu" else "Volatility", rvol_str, macd_col)}
-    {row("Ajánlás" if _current_lang=="hu" else "Action",
-         f"{rec.get('action','–')}  ({rec_side})",
-         "Bizalom" if _current_lang=="hu" else "Confidence",
-         f"{rec.get('confidence',0)*100:.1f}%")}
-    {"" if rec_side == neutral else
-     row("Stop-loss", fp(rec.get("stop")), "Take-profit", fp(rec.get("take_profit")))}
+         L("Volatilitás", "Volatility", "Volatilität"), rvol_str, rsi_col)}
+    {row("MACD hist", macd_str, "MACD line/sig", macd_ls, macd_col)}
+    {bb_html}
+    {vol_html}
+    {row(L("Max visszaesés", "Max drawdown", "Max Drawdown"), mdd_str, "", "", "#ef4444")}
+    {cross_html}
     {sr_html}
-    {inv_html}
+    {section(L("Döntés / ajánlás", "Decision / recommendation", "Entscheidung / Empfehlung"))}
+    {row(L("Ajánlás", "Action", "Empfehlung"),
+         f"{rec.get('action','–')}  ({rec_side})",
+         L("Bizalom", "Confidence", "Konfidenz"),
+         f"{rec.get('confidence',0)*100:.1f}%")}
+    {sig_html}
+    {"" if rec_side == neutral else
+     row(L("Belépő", "Entry", "Einstieg"), fp(rec.get("entry")), "", "", "#38bdf8")}
+    {"" if rec_side == neutral else
+     row("Stop-loss", fp(rec.get("stop")), "Take-profit", fp(rec.get("take_profit")), "#ef4444", "#22c55e")}
+    {reasons_html}
+    {(section(L("Befektetés", "Investment", "Investition")) + inv_html) if inv_html else ""}
     {hold_html}
     {ai_html}
   </table>
@@ -2814,6 +3147,7 @@ if QT_AVAILABLE:
         MARGIN_T = 36
         MARGIN_B = 28
         PATTERN_PANEL_H = 64
+        INDICATOR_PANEL_H = 96
 
         def __init__(self, parent=None):
             super().__init__(parent)
@@ -2823,6 +3157,8 @@ if QT_AVAILABLE:
             self._currency = "HUF"
             self._x_labels = []
             self._dark_mode = True
+            self._bb_bands = None      # (upper, mid, lower) np.array-ek vagy None
+            self._indicator = None     # {"type": "rsi"/"macd", ...} vagy None
             self.setMinimumHeight(360)
             self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.setStyleSheet("background: #0d1117;")
@@ -2833,12 +3169,15 @@ if QT_AVAILABLE:
             self.setStyleSheet(f"background: {bg};")
             self.update()
 
-        def set_data(self, candles, patterns, title="", currency="HUF", x_labels=None):
+        def set_data(self, candles, patterns, title="", currency="HUF", x_labels=None,
+                     bb_bands=None, indicator=None):
             self._candles  = candles
             self._patterns = patterns
             self._title    = title
             self._currency = currency
             self._x_labels = x_labels or []
+            self._bb_bands = bb_bands
+            self._indicator = indicator
             self.update()
 
         # ---------- Paint ----------
@@ -2876,9 +3215,10 @@ if QT_AVAILABLE:
             mr = self.MARGIN_R
             mt = self.MARGIN_T
             panel_h = self.PATTERN_PANEL_H if self._patterns else 0
+            ind_h = self.INDICATOR_PANEL_H if self._indicator else 0
             mb = self.MARGIN_B + panel_h
             plot_w = w - ml - mr
-            plot_h = h - mt - mb
+            plot_h = h - mt - mb - ind_h
 
             if plot_w < 10 or plot_h < 10:
                 return
@@ -2888,6 +3228,15 @@ if QT_AVAILABLE:
             lows   = [c[3] for c in candles]
             y_max  = max(highs)
             y_min  = min(lows)
+            # A Bollinger-sávok kilóghatnak a gyertyák sávjából — vegyük bele a skálába.
+            if self._bb_bands is not None:
+                up_b, _mid_b, lo_b = self._bb_bands
+                fin_up = up_b[~np.isnan(up_b)] if up_b is not None else np.array([])
+                fin_lo = lo_b[~np.isnan(lo_b)] if lo_b is not None else np.array([])
+                if fin_up.size:
+                    y_max = max(y_max, float(np.max(fin_up)))
+                if fin_lo.size:
+                    y_min = min(y_min, float(np.min(fin_lo)))
             y_span = y_max - y_min or max(abs(y_max) * 0.01, 1e-8)
             pad    = y_span * 0.06
             y_max += pad
@@ -3004,6 +3353,57 @@ if QT_AVAILABLE:
                         int(candle_w), int(body_h)
                     )
 
+            # ---- Bollinger-sávok overlay ----
+            if self._bb_bands is not None:
+                up_b, mid_b, lo_b = self._bb_bands
+
+                def _poly(vals):
+                    pts = []
+                    for i in range(min(len(vals), n)):
+                        v = vals[i]
+                        if v is None or np.isnan(v):
+                            continue
+                        pts.append((to_x(i), to_y(float(v))))
+                    return pts
+
+                up_pts = _poly(up_b)
+                lo_pts = _poly(lo_b)
+                mid_pts = _poly(mid_b)
+
+                # árnyékolt sáv (felső → alsó visszafelé)
+                if len(up_pts) >= 2 and len(lo_pts) >= 2:
+                    from PySide6.QtGui import QPolygonF
+                    poly = QPolygonF()
+                    for x, y in up_pts:
+                        poly.append(QPoint(int(x), int(y)))
+                    for x, y in reversed(lo_pts):
+                        poly.append(QPoint(int(x), int(y)))
+                    fill = QColor(99, 102, 241, 28)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(fill)
+                    painter.drawPolygon(poly)
+
+                def _draw_line(pts, color, width, dashed=False):
+                    if len(pts) < 2:
+                        return
+                    pen = QPen(QColor(color))
+                    pen.setWidthF(width)
+                    if dashed:
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    for k in range(1, len(pts)):
+                        painter.drawLine(int(pts[k - 1][0]), int(pts[k - 1][1]),
+                                         int(pts[k][0]), int(pts[k][1]))
+
+                _draw_line(up_pts, "#818cf8", 1.2)
+                _draw_line(lo_pts, "#818cf8", 1.2)
+                _draw_line(mid_pts, "#a78bfa", 1.0, dashed=True)
+
+            # ---- Indikátor alpanel (RSI / MACD) ----
+            if self._indicator:
+                self._draw_indicator_panel(painter, ml, mr, w, mt, plot_h, ind_h, n, to_x, fg_col, grid_col)
+
             # ---- x-axis labels ----
             painter.setPen(QPen(label_col))
             for idx, lbl in self._x_labels:
@@ -3041,36 +3441,130 @@ if QT_AVAILABLE:
                 f2 = QFont()
                 f2.setPointSize(9)
                 painter.setFont(f2)
-                x_cur = ml
+                line_h = 16
+                y_txt = panel_y + 6
                 for pat in self._patterns:
-                    col = QColor(pat["color"])
-                    painter.setPen(QPen(col))
-                    text = f"{pat['emoji']}  {pat['label']}: {pat['desc']}"
+                    if y_txt + line_h > h:
+                        break
+                    painter.setPen(QPen(QColor(pat["color"])))
                     painter.drawText(
-                        x_cur, panel_y + 8, w - x_cur - mr, panel_h - 12,
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-                        | Qt.TextFlag.TextWordWrap,
-                        text,
+                        ml, int(y_txt), w - ml - mr, line_h,
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                        f"{pat['emoji']}  {pat['label']}: {pat['desc']}",
                     )
-                    # Only one pattern description fits; stack them vertically
-                    x_cur = ml  # reset; we'll break lines below
-                    break  # draw first pattern; rest shown stacked
+                    y_txt += line_h
 
-                # Stack remaining patterns below
-                if len(self._patterns) > 1:
-                    y_txt = panel_y + 8
-                    line_h = 18
-                    for pat in self._patterns:
-                        col = QColor(pat["color"])
-                        painter.setPen(QPen(col))
-                        painter.drawText(
-                            ml, y_txt, w - ml - mr, line_h,
-                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                            f"{pat['emoji']}  {pat['label']}: {pat['desc']}",
-                        )
-                        y_txt += line_h
-                        if y_txt + line_h > h:
-                            break
+        def _draw_indicator_panel(self, painter, ml, mr, w, mt, plot_h, ind_h, n, to_x, fg_col, grid_col):
+            """RSI vagy MACD alpanel a gyertyadiagram alatt, közös x-tengellyel."""
+            ind = self._indicator or {}
+            top = mt + plot_h + 8
+            bottom = mt + plot_h + ind_h - 4
+            height = max(1.0, bottom - top)
+
+            # háttér + keret
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 0))
+            sep = QPen(grid_col)
+            sep.setWidthF(0.8)
+            painter.setPen(sep)
+            painter.drawLine(int(ml), int(top), int(w - mr), int(top))
+
+            itype = ind.get("type")
+            if itype == "rsi":
+                vals = ind.get("values")
+                if vals is None:
+                    return
+
+                def ry(v):
+                    return bottom - (max(0.0, min(100.0, v)) / 100.0) * height
+
+                # 30 / 50 / 70 szintek
+                for lvl, col, dash in ((70, "#ef4444", True), (50, "#6b7280", True), (30, "#22c55e", True)):
+                    pen = QPen(QColor(col))
+                    pen.setWidthF(0.8)
+                    pen.setStyle(Qt.PenStyle.DashLine if dash else Qt.PenStyle.SolidLine)
+                    painter.setPen(pen)
+                    yy = ry(lvl)
+                    painter.drawLine(int(ml), int(yy), int(w - mr), int(yy))
+                    painter.drawText(2, int(yy) - 8, ml - 6, 16,
+                                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                                     str(lvl))
+                # RSI vonal
+                pen = QPen(QColor("#38bdf8"))
+                pen.setWidthF(1.4)
+                painter.setPen(pen)
+                prev = None
+                for i in range(min(len(vals), n)):
+                    v = vals[i]
+                    if v is None or np.isnan(v):
+                        prev = None
+                        continue
+                    cur = (to_x(i), ry(float(v)))
+                    if prev is not None:
+                        painter.drawLine(int(prev[0]), int(prev[1]), int(cur[0]), int(cur[1]))
+                    prev = cur
+                painter.setPen(QPen(fg_col))
+                painter.drawText(int(ml) + 4, int(top) + 2, 80, 14,
+                                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "RSI (14)")
+
+            elif itype == "macd":
+                line = ind.get("line")
+                signal = ind.get("signal")
+                hist = ind.get("hist")
+                if line is None:
+                    return
+                allv = []
+                for a in (line, signal, hist):
+                    if a is not None:
+                        allv.append(a[~np.isnan(a)])
+                allv = np.concatenate(allv) if allv else np.array([0.0])
+                vmax = float(np.max(np.abs(allv))) or 1.0
+                zero_y = (top + bottom) / 2.0
+
+                def my(v):
+                    return zero_y - (v / vmax) * (height / 2.0 * 0.9)
+
+                # zéró vonal
+                pen = QPen(QColor("#6b7280"))
+                pen.setWidthF(0.8)
+                painter.setPen(pen)
+                painter.drawLine(int(ml), int(zero_y), int(w - mr), int(zero_y))
+                # histogram oszlopok
+                bar_w = max(1.0, (w - ml - mr) / n * 0.6)
+                painter.setPen(Qt.PenStyle.NoPen)
+                if hist is not None:
+                    for i in range(min(len(hist), n)):
+                        v = hist[i]
+                        if v is None or np.isnan(v):
+                            continue
+                        x = to_x(i)
+                        yv = my(float(v))
+                        col = QColor("#22c55e") if v >= 0 else QColor("#ef4444")
+                        col.setAlpha(150)
+                        painter.setBrush(col)
+                        y0, y1 = min(zero_y, yv), max(zero_y, yv)
+                        painter.drawRect(int(x - bar_w / 2), int(y0), int(bar_w), int(max(1, y1 - y0)))
+
+                def _line(arr, color):
+                    pen = QPen(QColor(color))
+                    pen.setWidthF(1.3)
+                    painter.setPen(pen)
+                    prev = None
+                    for i in range(min(len(arr), n)):
+                        v = arr[i]
+                        if v is None or np.isnan(v):
+                            prev = None
+                            continue
+                        cur = (to_x(i), my(float(v)))
+                        if prev is not None:
+                            painter.drawLine(int(prev[0]), int(prev[1]), int(cur[0]), int(cur[1]))
+                        prev = cur
+
+                _line(line, "#38bdf8")
+                _line(signal, "#f59e0b")
+                painter.setPen(QPen(fg_col))
+                painter.drawText(int(ml) + 4, int(top) + 2, 120, 14,
+                                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "MACD (12,26,9)")
 
 
 if QT_AVAILABLE:
@@ -3104,6 +3598,10 @@ if QT_AVAILABLE:
             self.ai_model = OPENAI_MODEL_DEFAULT
             self.claude_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             self.claude_model = ANTHROPIC_MODEL_DEFAULT
+            self.claude_cli_model = ""  # üres = a Claude Code alap modellje
+            # Melyik szolgáltatót használja az AI kommentár:
+            # "openai" | "claude" (API) | "claude_cli" (helyi előfizetés)
+            self.ai_provider = "claude" if self.claude_api_key else "openai"
             self.csv_autosave_enabled = True
             self.csv_path = str(Path.cwd() / "live_history.csv")
             self.holdings = load_holdings()
@@ -3115,6 +3613,8 @@ if QT_AVAILABLE:
             self._rule_cooldown = {}
             self._last_results = []
             self._last_scheduled_run_date = None
+            self._fng_value = None
+            self._fng_label = ""
 
             # ---- MAIN LAYOUT: vertical stack ----
             main_vbox = QVBoxLayout()
@@ -3242,6 +3742,15 @@ if QT_AVAILABLE:
             bottom_left.addWidget(self.btn_set_amount)
             left_col.addLayout(bottom_left)
 
+            # ---- Összegző panel (áttekintés) ----
+            self.summary_panel = QLabel()
+            self.summary_panel.setObjectName("summary_panel")
+            self.summary_panel.setWordWrap(True)
+            self.summary_panel.setTextFormat(Qt.TextFormat.RichText)
+            self.summary_panel.setMinimumHeight(132)
+            self.summary_panel.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            left_col.addWidget(self.summary_panel)
+
             left_panel = QWidget()
             left_panel.setLayout(left_col)
             content_row.addWidget(left_panel)
@@ -3294,6 +3803,10 @@ if QT_AVAILABLE:
             self.btn_scanner.setToolTip("Összes kijelölt eszköz kompakt jelzéstáblája")
             self.btn_scanner.clicked.connect(self.run_quick_scanner)
             out_row.addWidget(self.btn_scanner)
+            self.btn_export_csv = QPushButton("💾 CSV export")
+            self.btn_export_csv.setToolTip("Az utolsó elemzés eredményeinek exportja CSV-be")
+            self.btn_export_csv.clicked.connect(self.export_analysis_csv)
+            out_row.addWidget(self.btn_export_csv)
             out_row.addStretch(1)
             self.analysis_info_label = QLabel("")
             self.analysis_info_label.setObjectName("stat_chip_dim")
@@ -3348,10 +3861,15 @@ if QT_AVAILABLE:
             self.cb_bb_chart = QCheckBox("Bollinger sávok")
             self.cb_bb_chart.toggled.connect(self.refresh_price_chart)
             chart_opts_row.addWidget(self.cb_bb_chart)
-            self.cb_pattern_detect = QCheckBox("Alakzatfelismerés (M / W / V / ∧)")
+            self.cb_pattern_detect = QCheckBox("Alakzatfelismerés (M / W / V / ∧ / fej-váll / háromszög)")
             self.cb_pattern_detect.setChecked(True)
             self.cb_pattern_detect.toggled.connect(self.refresh_price_chart)
             chart_opts_row.addWidget(self.cb_pattern_detect)
+            self.indicator_combo = QComboBox()
+            self.indicator_combo.addItems(["Alpanel: nincs", "Alpanel: RSI", "Alpanel: MACD"])
+            self.indicator_combo.setToolTip("Indikátor alpanel a gyertyadiagram alatt")
+            self.indicator_combo.currentIndexChanged.connect(self.refresh_price_chart)
+            chart_opts_row.addWidget(self.indicator_combo)
             chart_opts_row.addStretch(1)
             chart_outer.addLayout(chart_opts_row)
 
@@ -3376,6 +3894,57 @@ if QT_AVAILABLE:
 
             alerts_tab = QWidget()
             alerts_layout = QVBoxLayout()
+
+            # ---- Riasztási szabály dashboard (vizuális szerkesztő) ----
+            rules_group = QGroupBox("🔔  Riasztási szabályok")
+            rules_group.setObjectName("settings_group")
+            rules_v = QVBoxLayout()
+            rules_v.setContentsMargins(10, 8, 10, 10)
+            rule_form = QHBoxLayout()
+            self.rule_asset_combo = QComboBox()
+            self.rule_asset_combo.addItem("* (összes)")
+            for _an in ASSETS:
+                self.rule_asset_combo.addItem(_an)
+            rule_form.addWidget(self.rule_asset_combo, 2)
+            self._rule_conditions = [
+                ("Ár ≥", "price_above"),
+                ("Ár ≤", "price_below"),
+                ("RSI ≥", "rsi_above"),
+                ("RSI ≤", "rsi_below"),
+            ]
+            self.rule_cond_combo = QComboBox()
+            for lbl, _k in self._rule_conditions:
+                self.rule_cond_combo.addItem(lbl)
+            rule_form.addWidget(self.rule_cond_combo, 1)
+            self.rule_value_edit = QLineEdit()
+            self.rule_value_edit.setPlaceholderText("érték")
+            self.rule_value_edit.setFixedWidth(110)
+            rule_form.addWidget(self.rule_value_edit)
+            self.btn_add_rule = QPushButton("➕ Hozzáadás")
+            self.btn_add_rule.clicked.connect(self.add_alert_rule_from_form)
+            rule_form.addWidget(self.btn_add_rule)
+            rules_v.addLayout(rule_form)
+
+            self.rules_table = QTableWidget()
+            self.rules_table.setColumnCount(3)
+            self.rules_table.setHorizontalHeaderLabels(["Eszköz", "Feltétel", "Érték"])
+            self.rules_table.setMaximumHeight(150)
+            self.rules_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.rules_table.horizontalHeader().setStretchLastSection(True)
+            rules_v.addWidget(self.rules_table)
+
+            rules_btn_row = QHBoxLayout()
+            self.btn_remove_rule = QPushButton("🗑 Kijelölt szabály törlése")
+            self.btn_remove_rule.clicked.connect(self.remove_selected_rule)
+            rules_btn_row.addWidget(self.btn_remove_rule)
+            self.btn_edit_rules_json = QPushButton("📋 JSON szerkesztő")
+            self.btn_edit_rules_json.clicked.connect(self.edit_alert_rules_dialog)
+            rules_btn_row.addWidget(self.btn_edit_rules_json)
+            rules_btn_row.addStretch(1)
+            rules_v.addLayout(rules_btn_row)
+            rules_group.setLayout(rules_v)
+            alerts_layout.addWidget(rules_group)
+
             self.alert_output = QTextEdit()
             self.alert_output.setReadOnly(True)
             self.alert_output.setPlaceholderText("Elo riasztasok es esemenyek...")
@@ -3570,6 +4139,17 @@ if QT_AVAILABLE:
             self.telegram_status = QLabel("📵  Telegram: kikapcsolva")
             self.telegram_status.setObjectName("status_label")
             lay_tg.addWidget(self.telegram_status)
+            self.telegram_help = QLabel(
+                '🔗 Hol találom? '
+                '<a style="color:#60a5fa" href="https://t.me/BotFather">BotFather (token)</a> '
+                '&nbsp;·&nbsp; '
+                '<a style="color:#60a5fa" href="https://t.me/userinfobot">Chat ID (userinfobot)</a>'
+            )
+            self.telegram_help.setObjectName("status_label")
+            self.telegram_help.setTextFormat(Qt.TextFormat.RichText)
+            self.telegram_help.setOpenExternalLinks(True)
+            self.telegram_help.setToolTip("Megnyitás a böngészőben")
+            lay_tg.addWidget(self.telegram_help)
             settings_layout.addWidget(grp_tg)
 
             # ── 5. AI Kommentár ──
@@ -3584,6 +4164,18 @@ if QT_AVAILABLE:
             self.ai_status = QLabel("AI: kikapcsolva")
             self.ai_status.setObjectName("status_label")
             lay_ai.addWidget(self.ai_status)
+            self.ai_help = QLabel(
+                '🔑 API kulcs: '
+                '<a style="color:#60a5fa" href="https://console.anthropic.com/settings/keys">Claude (Anthropic)</a> '
+                '&nbsp;·&nbsp; '
+                '<a style="color:#60a5fa" href="https://platform.openai.com/api-keys">OpenAI</a>'
+                '<br>💡 Vagy ingyen: „Claude helyi (előfizetés, CLI)" — ha be vagy lépve a Claude Code-ba.'
+            )
+            self.ai_help.setObjectName("status_label")
+            self.ai_help.setTextFormat(Qt.TextFormat.RichText)
+            self.ai_help.setOpenExternalLinks(True)
+            self.ai_help.setToolTip("Megnyitás a böngészőben")
+            lay_ai.addWidget(self.ai_help)
             self.btn_export_html = QPushButton("📄  HTML riport mentése…")
             self.btn_export_html.clicked.connect(self.export_html_report)
             lay_ai.addWidget(self.btn_export_html)
@@ -3656,6 +4248,8 @@ if QT_AVAILABLE:
             self.update_selected_count()
             self.refresh_telegram_status()
             self.refresh_ai_status()
+            self.refresh_rules_table()
+            self.update_summary_panel()
             self.retranslate_ui()
 
             # F5 shortcut
@@ -3789,6 +4383,7 @@ if QT_AVAILABLE:
             self._theme = "dark" if index == 0 else "light"
             save_app_config(self._lang, self._theme)
             self.apply_theme()
+            self.update_summary_panel()
 
         def retranslate_ui(self):
             t = self.tr_
@@ -3885,6 +4480,8 @@ if QT_AVAILABLE:
             if fng:
                 v = fng["value"]
                 label = fng["label"]
+                self._fng_value = v
+                self._fng_label = label
                 if v <= 25:
                     emoji, col = "😨", "#ef4444"
                 elif v <= 45:
@@ -3897,6 +4494,7 @@ if QT_AVAILABLE:
                     emoji, col = "🤑", "#22c55e"
                 self.fng_label.setText(f"{emoji} F&G: {v} ({label})")
                 self.fng_label.setStyleSheet(f"color: {col};")
+                self.update_summary_panel()
 
         def run_quick_scanner(self):
             """Show a compact HTML table with signal for every selected asset."""
@@ -4606,9 +5204,53 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     raise ValueError("A gyökérnek listanek kell lennie.")
                 self.custom_rules = data
                 save_custom_alert_rules(data)
+                self.refresh_rules_table()
                 self.log_alert("Riasztási szabályok elmentve.")
             except (json.JSONDecodeError, ValueError, TypeError) as e:
                 self.log_alert(f"Szabály JSON hiba: {e}")
+
+        def refresh_rules_table(self):
+            """A vizuális szabálytábla feltöltése a self.custom_rules listából."""
+            if not hasattr(self, "rules_table"):
+                return
+            cond_map = {k: lbl for lbl, k in self._rule_conditions}
+            self.rules_table.setRowCount(len(self.custom_rules))
+            for i, rule in enumerate(self.custom_rules):
+                asset = str(rule.get("asset", "*"))
+                asset_disp = "* (összes)" if asset == "*" else asset
+                cond = cond_map.get(str(rule.get("rule", "")), str(rule.get("rule", "")))
+                val = rule.get("value", "")
+                self.rules_table.setItem(i, 0, QTableWidgetItem(asset_disp))
+                self.rules_table.setItem(i, 1, QTableWidgetItem(cond))
+                self.rules_table.setItem(i, 2, QTableWidgetItem(str(val)))
+
+        def add_alert_rule_from_form(self):
+            asset_txt = self.rule_asset_combo.currentText()
+            asset = "*" if asset_txt.startswith("*") else asset_txt
+            cond_key = self._rule_conditions[self.rule_cond_combo.currentIndex()][1]
+            raw = self.rule_value_edit.text().strip().replace(",", ".")
+            try:
+                value = float(raw)
+            except ValueError:
+                self.log_alert("❌ Érvénytelen érték a riasztási szabályhoz.")
+                return
+            self.custom_rules.append({"asset": asset, "rule": cond_key, "value": value})
+            save_custom_alert_rules(self.custom_rules)
+            self.refresh_rules_table()
+            self.rule_value_edit.clear()
+            self.log_alert(f"✅ Riasztási szabály hozzáadva: {asset} {cond_key} {value}")
+
+        def remove_selected_rule(self):
+            rows = sorted({i.row() for i in self.rules_table.selectedItems()}, reverse=True)
+            if not rows:
+                self.log_alert("Jelölj ki egy szabályt a törléshez.")
+                return
+            for r in rows:
+                if 0 <= r < len(self.custom_rules):
+                    del self.custom_rules[r]
+            save_custom_alert_rules(self.custom_rules)
+            self.refresh_rules_table()
+            self.log_alert(f"🗑 {len(rows)} szabály törölve.")
 
         def export_html_report(self):
             if not self._last_results:
@@ -4629,6 +5271,63 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 self.log_alert(f"HTML mentve: {path}")
             except OSError as e:
                 self.log_alert(f"HTML mentési hiba: {e}")
+
+        def export_analysis_csv(self):
+            """Az utolsó elemzés összes eredményének exportja egy CSV fájlba."""
+            if not self._last_results:
+                self.log_alert("Nincs mit exportálni — futtass előbb elemzést.")
+                return
+            _, currency, _ = self.resolve_rate_currency()
+            path, _sel = QFileDialog.getSaveFileName(
+                self,
+                "Elemzés CSV export",
+                str(Path.home() / "ai_tracker_elemzes.csv"),
+                "CSV (*.csv)",
+            )
+            if not path:
+                return
+            now_text = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
+            fields = [
+                "timestamp", "asset", "symbol", "currency", "current", "future",
+                "day_change_pct", "rsi", "next_up_prob", "accuracy", "decision",
+                "action", "side", "confidence", "stop", "take_profit",
+                "macd_hist", "realized_vol_annual_pct", "max_drawdown_pct",
+                "deploy_amount", "deploy_frac",
+            ]
+            try:
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=fields)
+                    writer.writeheader()
+                    for r in self._last_results:
+                        rec = r.get("recommendation") or {}
+                        met = r.get("metrics") or {}
+                        inv = r.get("investment") or {}
+                        writer.writerow({
+                            "timestamp": now_text,
+                            "asset": r.get("name", ""),
+                            "symbol": r.get("symbol", ""),
+                            "currency": currency,
+                            "current": r.get("current", ""),
+                            "future": r.get("future", ""),
+                            "day_change_pct": r.get("day_change_pct", ""),
+                            "rsi": r.get("rsi", ""),
+                            "next_up_prob": r.get("next_up_prob", ""),
+                            "accuracy": r.get("accuracy", ""),
+                            "decision": r.get("decision", ""),
+                            "action": rec.get("action", ""),
+                            "side": rec.get("side", ""),
+                            "confidence": rec.get("confidence", ""),
+                            "stop": rec.get("stop", ""),
+                            "take_profit": rec.get("take_profit", ""),
+                            "macd_hist": met.get("macd_hist", ""),
+                            "realized_vol_annual_pct": met.get("realized_vol_annual_pct", ""),
+                            "max_drawdown_pct": met.get("max_drawdown_pct", ""),
+                            "deploy_amount": inv.get("deploy_amount", ""),
+                            "deploy_frac": inv.get("deploy_frac", ""),
+                        })
+                self.log_alert(f"✅ CSV exportálva: {path} ({len(self._last_results)} sor)")
+            except OSError as e:
+                self.log_alert(f"❌ CSV exportálási hiba: {e}")
 
         def refresh_correlation_view(self):
             items = self.selected_asset_items()
@@ -4839,15 +5538,26 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 if self.cb_pattern_detect.isChecked() and len(candles) >= 10:
                     patterns = detect_patterns(raw_candles, mult=mult)
 
-                # Bollinger overlay → jelzőpontok a gyertyadiagramon felett (szöveges)
+                closes_disp = np.array([c[4] for c in candles], dtype=float)
+
+                # Bollinger-sávok overlay (valódi rajzolás a gyertyadiagramon)
+                bb_bands = None
                 bb_note = ""
                 if self.cb_bb_chart.isChecked() and len(candles) >= 21:
-                    closes_arr = np.array([c[4] for c in candles], dtype=float)
-                    mu = float(np.mean(closes_arr[-20:]))
-                    sd = float(np.std(closes_arr[-20:]))
+                    up, md, lo = rolling_bollinger(closes_disp, 20, 2.0)
+                    bb_bands = (up, md, lo)
                     bb_note = (
-                        f" | BB: fel {(mu + 2*sd):,.2f}  közép {mu:,.2f}  al {(mu - 2*sd):,.2f} {currency}"
+                        f" | BB(20,2σ): fel {up[-1]:,.2f}  közép {md[-1]:,.2f}  al {lo[-1]:,.2f} {currency}"
                     )
+
+                # Indikátor alpanel (RSI / MACD)
+                indicator = None
+                ind_idx = self.indicator_combo.currentIndex() if hasattr(self, "indicator_combo") else 0
+                if ind_idx == 1 and len(candles) >= 16:
+                    indicator = {"type": "rsi", "values": rolling_rsi(closes_disp, 14)}
+                elif ind_idx == 2 and len(candles) >= 35:
+                    line, sig, hist = rolling_macd(closes_disp)
+                    indicator = {"type": "macd", "line": line, "signal": sig, "hist": hist}
 
                 # X tengelycímkék generálása (max 8 db egyenletesen elosztva)
                 n = len(candles)
@@ -4869,7 +5579,8 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
 
                 self.candle_widget.set_data(
                     candles, patterns, title=title_str,
-                    currency=currency, x_labels=x_labels
+                    currency=currency, x_labels=x_labels,
+                    bb_bands=bb_bands, indicator=indicator,
                 )
 
                 # Subtitle: alakzatösszefoglaló
@@ -4900,6 +5611,61 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             if selected == 0:
                 selected = len(ASSETS)
             self.stats_assets.setText(f"Kivalasztva: {selected}")
+            if hasattr(self, "summary_panel"):
+                self.update_summary_panel()
+
+        def update_summary_panel(self):
+            """A bal panel alján lévő áttekintő összegzés frissítése."""
+            if not hasattr(self, "summary_panel"):
+                return
+            dark = self._theme == "dark"
+            txt_col = "#cbd5e1" if dark else "#1e293b"
+            dim = "#64748b" if dark else "#94a3b8"
+            border = "#1e293b" if dark else "#e2e8f0"
+            bg = "#111827" if dark else "#ffffff"
+
+            sel = len(self.list_widget.selectedItems()) or len(ASSETS)
+            rows = [f"<b style='font-size:12px'>📊 Áttekintés</b>",
+                    f"<span style='color:{dim}'>Kiválasztva:</span> <b>{sel}</b> eszköz"]
+
+            if self._fng_value is not None:
+                rows.append(
+                    f"<span style='color:{dim}'>Fear &amp; Greed:</span> "
+                    f"<b>{self._fng_value}</b> <span style='color:{dim}'>({html.escape(self._fng_label)})</span>"
+                )
+            if self.holdings:
+                rows.append(f"<span style='color:{dim}'>Portfólió:</span> <b>{len(self.holdings)}</b> pozíció")
+
+            res = [r for r in self._last_results if r.get("day_change_pct") is not None]
+            if res:
+                ordered = sorted(res, key=lambda r: r["day_change_pct"], reverse=True)
+                top = ordered[0]
+                rows.append(
+                    f"<span style='color:{dim}'>🔼 Top:</span> {html.escape(top['name'])} "
+                    f"<b style='color:#22c55e'>{top['day_change_pct']:+.2f}%</b>"
+                )
+                if len(ordered) > 1:
+                    bot = ordered[-1]
+                    rows.append(
+                        f"<span style='color:{dim}'>🔽 Alja:</span> {html.escape(bot['name'])} "
+                        f"<b style='color:#ef4444'>{bot['day_change_pct']:+.2f}%</b>"
+                    )
+            if self._last_results:
+                buy = sum(1 for r in self._last_results if "📈" in r["decision"])
+                sell = sum(1 for r in self._last_results if "⚠️" in r["decision"])
+                wait = max(0, len(self._last_results) - buy - sell)
+                rows.append(
+                    f"<span style='color:{dim}'>Jelzések:</span> "
+                    f"<b style='color:#22c55e'>{buy}</b> / "
+                    f"<b style='color:#ef4444'>{sell}</b> / "
+                    f"<b style='color:#f59e0b'>{wait}</b>"
+                )
+
+            body = "<br>".join(rows)
+            self.summary_panel.setText(
+                f"<div style='border:1px solid {border};background:{bg};border-radius:10px;"
+                f"padding:8px 10px;font-size:11px;color:{txt_col};line-height:1.6'>{body}</div>"
+            )
 
         def toggle_auto_clear(self, checked):
             self.auto_clear_analysis = bool(checked)
@@ -4915,38 +5681,107 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             self.refresh_ai_status()
 
         def refresh_ai_status(self):
-            has_key = bool(self.ai_api_key or self.claude_api_key)
-            provider = "Claude" if self.claude_api_key else "OpenAI"
-            model_name = self.claude_model if self.claude_api_key else self.ai_model
-            if self.ai_commentary_enabled and has_key:
+            if self.ai_provider == "claude_cli":
+                provider = "Claude (előfizetés)"
+                model_name = self.claude_cli_model or "alap"
+                ready = bool(shutil.which("claude"))
+            elif self.ai_provider == "claude":
+                provider = "Claude API"
+                model_name = self.claude_model
+                ready = bool(self.claude_api_key)
+            else:
+                provider = "OpenAI"
+                model_name = self.ai_model
+                ready = bool(self.ai_api_key)
+            if self.ai_commentary_enabled and ready:
                 self.ai_status.setText(self.tr_("ai_active", provider=provider, model=model_name))
-            elif has_key:
+            elif ready:
                 self.ai_status.setText(self.tr_("ai_key_set", provider=provider, model=model_name))
             else:
                 self.ai_status.setText(self.tr_("ai_off"))
 
         def configure_ai(self):
-            key, ok_key = QInputDialog.getText(
-                self,
-                "AI API kulcs",
-                "OpenAI API key:",
-                text=self.ai_api_key,
+            providers = [
+                "OpenAI (GPT) – API kulcs, fizetős",
+                "Claude API (Anthropic) – API kulcs, fizetős",
+                "Claude helyi (előfizetés, claude CLI) – ingyenes, ha be vagy lépve",
+            ]
+            cur = {"openai": 0, "claude": 1, "claude_cli": 2}.get(self.ai_provider, 0)
+            prov, ok = QInputDialog.getItem(
+                self, "AI szolgáltató",
+                "Válaszd ki, melyik AI adja a kommentárt:",
+                providers, cur, False,
             )
-            if not ok_key:
+            if not ok:
                 return
-            model, ok_model = QInputDialog.getText(
-                self,
-                "AI modell",
-                "Model:",
-                text=self.ai_model,
-            )
-            if not ok_model:
+            if prov.startswith("Claude helyi"):
+                self.ai_provider = "claude_cli"
+                if not shutil.which("claude"):
+                    self.log_alert("⚠️ A 'claude' parancs nem található — telepítsd a Claude Code-ot.")
+                model, ok2 = QInputDialog.getText(
+                    self, "Claude modell (helyi CLI)",
+                    "Modell (üresen hagyva a Claude Code alapját használja,\n"
+                    "pl.: sonnet, opus, haiku):",
+                    text=self.claude_cli_model,
+                )
+                if not ok2:
+                    return
+                self.claude_cli_model = model.strip()
+                self.log_alert(
+                    f"AI beállítva: Claude helyi CLI / "
+                    f"{self.claude_cli_model or 'alap modell'} (előfizetés)"
+                )
+                self.refresh_ai_status()
                 return
-            self.ai_api_key = key.strip()
-            self.ai_model = model.strip() if model.strip() else OPENAI_MODEL_DEFAULT
+            if prov.startswith("Claude API"):
+                self.ai_provider = "claude"
+                key, ok1 = QInputDialog.getText(
+                    self, "Claude API kulcs",
+                    "Anthropic API key (sk-ant-…):\n"
+                    "Kulcs igénylése: https://console.anthropic.com/settings/keys\n"
+                    "(Jelentkezz be → API Keys → Create Key)",
+                    text=self.claude_api_key,
+                )
+                if not ok1:
+                    return
+                model, ok2 = QInputDialog.getText(
+                    self, "Claude modell",
+                    "Modell azonosító:\n"
+                    "Elérhető modellek: https://docs.anthropic.com/en/docs/about-claude/models\n"
+                    f"(alap: {ANTHROPIC_MODEL_DEFAULT})",
+                    text=self.claude_model,
+                )
+                if not ok2:
+                    return
+                self.claude_api_key = key.strip()
+                self.claude_model = model.strip() if model.strip() else ANTHROPIC_MODEL_DEFAULT
+                if self.claude_api_key:
+                    self.log_alert(f"AI beállítva: Claude / {self.claude_model}")
+            else:
+                self.ai_provider = "openai"
+                key, ok1 = QInputDialog.getText(
+                    self, "OpenAI API kulcs",
+                    "OpenAI API key (sk-…):\n"
+                    "Kulcs igénylése: https://platform.openai.com/api-keys\n"
+                    "(Jelentkezz be → Create new secret key)",
+                    text=self.ai_api_key,
+                )
+                if not ok1:
+                    return
+                model, ok2 = QInputDialog.getText(
+                    self, "OpenAI modell",
+                    "Modell azonosító:\n"
+                    "Elérhető modellek: https://platform.openai.com/docs/models\n"
+                    f"(alap: {OPENAI_MODEL_DEFAULT})",
+                    text=self.ai_model,
+                )
+                if not ok2:
+                    return
+                self.ai_api_key = key.strip()
+                self.ai_model = model.strip() if model.strip() else OPENAI_MODEL_DEFAULT
+                if self.ai_api_key:
+                    self.log_alert(f"AI beállítva: OpenAI / {self.ai_model}")
             self.refresh_ai_status()
-            if self.ai_api_key:
-                self.log_alert(f"AI beallitva: {self.ai_model}")
 
         def set_csv_path(self):
             value, ok = QInputDialog.getText(
@@ -4987,7 +5822,9 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             token, ok_token = QInputDialog.getText(
                 self,
                 "Telegram bot token",
-                "Bot token (BotFather által adott):",
+                "Bot token (BotFather által adott):\n"
+                "1) Nyisd meg Telegramban: https://t.me/BotFather\n"
+                "2) /newbot → adj nevet → másold ki a tokent (pl. 123456:ABC-DEF…)",
                 text=self.telegram_bot_token,
             )
             if not ok_token:
@@ -4995,7 +5832,10 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             chat_id, ok_chat = QInputDialog.getText(
                 self,
                 "Telegram chat ID",
-                "Chat ID (pl. @csatornád vagy numerikus):",
+                "Chat ID (numerikus vagy @csatornanév):\n"
+                "Numerikus ID-hez: írj a botodnak egy üzenetet, majd nyisd meg:\n"
+                "https://api.telegram.org/bot<TOKEN>/getUpdates — a chat.id mező az.\n"
+                "Vagy kérdezd meg: https://t.me/userinfobot",
                 text=self.telegram_chat_id,
             )
             if not ok_chat:
@@ -5238,15 +6078,30 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     result["investment"] = evaluate_today_investment(
                         self.invest_amount, currency, has_huf, fx_ctx, result,
                     )
-                    if self.ai_commentary_enabled and (self.ai_api_key or self.claude_api_key):
-                        ai_text, ai_err = get_ai_commentary(
-                            result=result, currency=currency,
-                            api_key=self.ai_api_key, model=self.ai_model,
-                            claude_api_key=self.claude_api_key,
-                            claude_model=self.claude_model,
-                        )
+                    if self.ai_commentary_enabled:
+                        prov = self.ai_provider
+                        ai_text, ai_err = None, None
+                        if prov == "claude_cli":
+                            ai_text, ai_err = get_claude_cli_commentary(
+                                result, currency,
+                                model=self.claude_cli_model or None,
+                            )
+                        elif prov == "claude" and self.claude_api_key:
+                            ai_text, ai_err = get_ai_commentary(
+                                result=result, currency=currency,
+                                api_key=None, model=self.ai_model,
+                                claude_api_key=self.claude_api_key,
+                                claude_model=self.claude_model,
+                            )
+                        elif prov == "openai" and self.ai_api_key:
+                            ai_text, ai_err = get_ai_commentary(
+                                result=result, currency=currency,
+                                api_key=self.ai_api_key, model=self.ai_model,
+                            )
                         if ai_text:
                             result["ai_commentary"] = ai_text
+                        elif ai_err:
+                            self.log_alert(f"AI ({prov}) hiba — {result.get('name')}: {ai_err}")
                     results.append(result)
                     for msg in fire_custom_rules_if_needed(
                         self.custom_rules, result, self._rule_cooldown
@@ -5322,6 +6177,7 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 self._last_results = results
                 self.update_decision_stats(results)
                 self.update_portfolio_tab(results, currency)
+                self.update_summary_panel()
                 if self.live_timer.isActive() and self.csv_autosave_enabled:
                     try:
                         append_live_csv(self.csv_path, csv_rows)
