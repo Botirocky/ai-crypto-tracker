@@ -57,3 +57,4 @@ pyinstaller --onefile --windowed --icon=crypto_icon.ico --add-data "crypto_icon.
 5. run the EXE
 <img width="1272" height="654" alt="kép" src="https://github.com/user-attachments/assets/e4f26919-4a47-4ca7-8ae6-ee59e953d88a" />
 
+## AI website: https://botirocky.github.io/ai-cripto-tacker-webpage/
