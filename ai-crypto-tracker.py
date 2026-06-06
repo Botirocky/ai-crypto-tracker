@@ -488,6 +488,7 @@ APP_STATE_DIR = Path.home() / ".config" / "ai-cripto-tracker"
 FAVORITES_PATH = APP_STATE_DIR / "favorites.json"
 CUSTOM_ALERTS_PATH = APP_STATE_DIR / "custom_alerts.json"
 TELEGRAM_CONFIG_PATH = APP_STATE_DIR / "telegram_config.json"
+DISCORD_CONFIG_PATH = APP_STATE_DIR / "discord_config.json"
 APP_CONFIG_PATH = APP_STATE_DIR / "app_config.json"
 HOLDINGS_PATH  = APP_STATE_DIR / "holdings.json"
 SESSION_STATE_PATH = APP_STATE_DIR / "session.json"
@@ -537,6 +538,11 @@ TRANSLATIONS = {
         "telegram_off": "📵  Telegram: kikapcsolva",
         "telegram_active": "🟢  Telegram: aktív (chat: {id})",
         "telegram_partial": "🟡  Telegram: részben beállítva",
+        "discord_config": "⚙️  Discord beállítás (webhook URL)",
+        "discord_test": "📨  Discord tesztüzenet",
+        "discord_report": "📊  Riport küldése Discordra",
+        "discord_off": "📵  Discord: kikapcsolva",
+        "discord_active": "🟢  Discord: aktív",
         "ai_checkbox": "Felhő AI magyarázat engedélyezve",
         "ai_config_btn": "AI beállítás (API kulcs + modell)",
         "ai_off": "AI: kikapcsolva",
@@ -656,6 +662,11 @@ TRANSLATIONS = {
         "telegram_off": "📵  Telegram: disabled",
         "telegram_active": "🟢  Telegram: active (chat: {id})",
         "telegram_partial": "🟡  Telegram: partially configured",
+        "discord_config": "⚙️  Discord settings (webhook URL)",
+        "discord_test": "📨  Discord test message",
+        "discord_report": "📊  Send report to Discord",
+        "discord_off": "📵  Discord: disabled",
+        "discord_active": "🟢  Discord: active",
         "ai_checkbox": "Cloud AI commentary enabled",
         "ai_config_btn": "AI settings (API key + model)",
         "ai_off": "AI: disabled",
@@ -774,6 +785,11 @@ TRANSLATIONS = {
         "telegram_off": "📵  Telegram: deaktiviert",
         "telegram_active": "🟢  Telegram: aktiv (Chat: {id})",
         "telegram_partial": "🟡  Telegram: teilweise konfiguriert",
+        "discord_config": "⚙️  Discord-Einstellungen (Webhook-URL)",
+        "discord_test": "📨  Discord-Testnachricht",
+        "discord_report": "📊  Bericht an Discord senden",
+        "discord_off": "📵  Discord: deaktiviert",
+        "discord_active": "🟢  Discord: aktiv",
         "ai_checkbox": "Cloud-KI-Kommentar aktiviert",
         "ai_config_btn": "KI-Einstellungen (API-Schlüssel + Modell)",
         "ai_off": "KI: deaktiviert",
@@ -1236,6 +1252,27 @@ def save_telegram_config(token, chat_id):
     ensure_app_state_dir()
     TELEGRAM_CONFIG_PATH.write_text(
         json.dumps({"token": token, "chat_id": chat_id}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_discord_config():
+    ensure_app_state_dir()
+    if not DISCORD_CONFIG_PATH.is_file():
+        return ""
+    try:
+        data = json.loads(DISCORD_CONFIG_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data.get("webhook_url", "")
+    except (OSError, ValueError, TypeError):
+        pass
+    return ""
+
+
+def save_discord_config(webhook_url):
+    ensure_app_state_dir()
+    DISCORD_CONFIG_PATH.write_text(
+        json.dumps({"webhook_url": webhook_url}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -2220,6 +2257,122 @@ def format_telegram_alert(message, asset_name=""):
     else:
         header = "⚠️ <b>Árfolyam riasztás</b>\n"
     return header + html.escape(message)
+
+
+# ---- Discord (webhook) ----
+DISCORD_USERNAME = "AI Eszközelemző Pro"
+# Embed színek (decimális RGB)
+DISCORD_COLOR_BUY = 0x23E87A
+DISCORD_COLOR_SELL = 0xFF5D73
+DISCORD_COLOR_WAIT = 0xFFCB45
+DISCORD_COLOR_INFO = 0x5865F2  # Discord "blurple"
+
+
+def _discord_signal_meta(decision):
+    """Map a decision string (HU/EN/DE) to (emoji, embed color)."""
+    dec_up = str(decision or "").upper()
+    if any(kw in dec_up for kw in ("VÉTEL", "VETEL", "BUY", "KAUF")) or "📈" in dec_up:
+        return "📈", DISCORD_COLOR_BUY
+    if any(kw in dec_up for kw in ("ELADÁS", "ELADAS", "SELL", "VERKAUF")) or "⚠️" in dec_up:
+        return "📉", DISCORD_COLOR_SELL
+    return "⏳", DISCORD_COLOR_WAIT
+
+
+def send_discord_message(webhook_url, content=None, embeds=None, timeout=REQUEST_TIMEOUT):
+    """Send a message to a Discord channel via incoming webhook.
+
+    Returns (ok: bool, error: str|None).
+    """
+    url = (webhook_url or "").strip()
+    if not url:
+        return False, "Hiányzó Discord webhook URL"
+    if "/webhooks/" not in url or not url.lower().startswith("http"):
+        return False, "Érvénytelen Discord webhook URL (https://discord.com/api/webhooks/…)"
+
+    payload = {"username": DISCORD_USERNAME, "allowed_mentions": {"parse": []}}
+    if content:
+        payload["content"] = content[:2000]
+    if embeds:
+        payload["embeds"] = embeds[:10]  # Discord max. 10 embed / üzenet
+    if "content" not in payload and "embeds" not in payload:
+        return False, "Üres Discord üzenet"
+
+    try:
+        r = http_post(url, timeout=timeout, json=payload)
+        if r.status_code in (200, 204):
+            return True, None
+        if r.status_code == 401 or r.status_code == 403:
+            return False, "Discord 401/403: érvénytelen vagy visszavont webhook."
+        if r.status_code == 404:
+            return False, "Discord 404: a webhook nem található (törölve vagy hibás URL)."
+        if r.status_code == 429:
+            try:
+                retry = r.json().get("retry_after", "?")
+            except ValueError:
+                retry = "?"
+            return False, f"Discord 429: rate limit (várj {retry}s)."
+        return False, f"HTTP {r.status_code}: {(r.text or '')[:200]}"
+    except (requests.RequestException, ValueError, TypeError) as e:
+        return False, str(e)
+
+
+def format_discord_result_embed(result, currency="HUF"):
+    """Format a single asset result as a rich Discord embed dict."""
+    decision = str(result.get("decision", ""))
+    emoji, color = _discord_signal_meta(decision)
+    rec = result.get("recommendation", {})
+    name = str(result.get("name", ""))
+    symbol = str(result.get("symbol", ""))
+
+    fields = []
+    dcp = result.get("day_change_pct")
+    if dcp is not None:
+        arrow = "▲" if dcp >= 0 else "▼"
+        fields.append({"name": "📊 Napi változás", "value": f"{arrow} {dcp:+.2f}%", "inline": True})
+    fields.append({"name": "💰 Ár", "value": f"{_fmt_price(result['current'])} {currency}", "inline": True})
+    fields.append({"name": "🎯 AI célár (1h)", "value": f"{_fmt_price(result['future'])} {currency}", "inline": True})
+    fields.append({"name": "🤖 Valószínűség fel", "value": f"{result['next_up_prob'] * 100:.1f}%", "inline": True})
+    fields.append({"name": "📐 RSI", "value": f"{result['rsi']:.1f}", "inline": True})
+    fields.append({"name": "🎲 Bizalom", "value": f"{rec.get('confidence', 0) * 100:.1f}%", "inline": True})
+    fields.append({
+        "name": "💼 Ajánlás",
+        "value": f"{rec.get('action', '-')} ({rec.get('side', '-')})",
+        "inline": False,
+    })
+    if rec.get("side") not in ("NEUTRAL",):
+        stop_val = rec.get("stop", 0)
+        tp_val = rec.get("take_profit", 0)
+        if stop_val and stop_val != rec.get("entry"):
+            fields.append({"name": "🚫 Stop-loss", "value": f"{_fmt_price(stop_val)} {currency}", "inline": True})
+            fields.append({"name": "✨ Take-profit", "value": f"{_fmt_price(tp_val)} {currency}", "inline": True})
+    inv = result.get("investment")
+    if inv:
+        fields.append({
+            "name": "💵 Javasolt tét",
+            "value": f"{_fmt_price(inv['deploy_amount'])} {currency} ({inv['deploy_frac'] * 100:.0f}%)",
+            "inline": False,
+        })
+
+    return {
+        "title": f"{emoji} {name} ({symbol})",
+        "description": f"**Döntés:** {decision}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "AI Eszközelemző Pro"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def format_discord_alert_embed(message, asset_name=""):
+    """Format a price alert as a Discord embed dict."""
+    title = f"⚠️ Riasztás – {asset_name}" if asset_name else "⚠️ Árfolyam riasztás"
+    return {
+        "title": title,
+        "description": str(message)[:4096],
+        "color": DISCORD_COLOR_WAIT,
+        "footer": {"text": "AI Eszközelemző Pro"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def append_live_csv(csv_path, rows):
@@ -3593,6 +3746,11 @@ if QT_AVAILABLE:
                 if not self.telegram_chat_id and saved_chat:
                     self.telegram_chat_id = saved_chat
             self.telegram_enabled = bool(self.telegram_bot_token and self.telegram_chat_id)
+            # Discord webhook (közvetlen push, bot nélkül)
+            self.discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+            if not self.discord_webhook_url:
+                self.discord_webhook_url = load_discord_config()
+            self.discord_enabled = bool(self.discord_webhook_url)
             self.ai_commentary_enabled = False
             self.ai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
             self.ai_model = OPENAI_MODEL_DEFAULT
@@ -4152,6 +4310,35 @@ if QT_AVAILABLE:
             lay_tg.addWidget(self.telegram_help)
             settings_layout.addWidget(grp_tg)
 
+            # ── 4b. Discord ──
+            grp_dc, lay_dc = make_group("💬  Discord")
+            self.btn_discord = QPushButton("⚙️  Beállítás (webhook URL)")
+            self.btn_discord.setObjectName("discord_btn")
+            self.btn_discord.clicked.connect(self.configure_discord)
+            lay_dc.addWidget(self.btn_discord)
+            dc_action_row = QHBoxLayout()
+            self.btn_discord_test = QPushButton("📨  Tesztüzenet")
+            self.btn_discord_test.setObjectName("discord_btn")
+            self.btn_discord_test.clicked.connect(self.send_discord_test)
+            dc_action_row.addWidget(self.btn_discord_test)
+            self.btn_discord_report = QPushButton("📊  Riport küldése")
+            self.btn_discord_report.setObjectName("discord_btn")
+            self.btn_discord_report.clicked.connect(self.send_discord_full_report)
+            dc_action_row.addWidget(self.btn_discord_report)
+            lay_dc.addLayout(dc_action_row)
+            self.discord_status = QLabel("📵  Discord: kikapcsolva")
+            self.discord_status.setObjectName("status_label")
+            lay_dc.addWidget(self.discord_status)
+            self.discord_help = QLabel(
+                '🔗 Hol találom? Discord szerver → Csatorna beállításai → '
+                '<b>Integrációk → Webhookok → Új webhook → Webhook URL másolása</b>'
+            )
+            self.discord_help.setObjectName("status_label")
+            self.discord_help.setTextFormat(Qt.TextFormat.RichText)
+            self.discord_help.setWordWrap(True)
+            lay_dc.addWidget(self.discord_help)
+            settings_layout.addWidget(grp_dc)
+
             # ── 5. AI Kommentár ──
             grp_ai, lay_ai = make_group("🤖  AI Kommentár")
             self.ai_checkbox = QCheckBox("Felhő AI magyarázat engedélyezve")
@@ -4247,6 +4434,7 @@ if QT_AVAILABLE:
 
             self.update_selected_count()
             self.refresh_telegram_status()
+            self.refresh_discord_status()
             self.refresh_ai_status()
             self.refresh_rules_table()
             self.update_summary_panel()
@@ -4443,6 +4631,9 @@ if QT_AVAILABLE:
             self.btn_telegram.setText(t("telegram_config"))
             self.btn_telegram_test.setText(t("telegram_test"))
             self.btn_telegram_report.setText(t("telegram_report"))
+            self.btn_discord.setText(t("discord_config"))
+            self.btn_discord_test.setText(t("discord_test"))
+            self.btn_discord_report.setText(t("discord_report"))
             self.ai_checkbox.setText(t("ai_checkbox"))
             self.btn_ai_config.setText(t("ai_config_btn"))
             self.btn_export_html.setText(t("export_html"))
@@ -4473,6 +4664,7 @@ if QT_AVAILABLE:
             if isinstance(hdrs2, list):
                 self.holdings_table.setHorizontalHeaderLabels(hdrs2)
             self.refresh_telegram_status()
+            self.refresh_discord_status()
             self.refresh_ai_status()
 
         def _fetch_fng(self):
@@ -4822,6 +5014,11 @@ QPushButton#telegram_btn {
 }
 QPushButton#telegram_btn:hover { background: #2563eb; color: #fff; }
 
+QPushButton#discord_btn {
+    background: #2b2d52; color: #c1c6ff; border-color: #5865f2;
+}
+QPushButton#discord_btn:hover { background: #5865f2; color: #fff; }
+
 QPushButton#danger_btn {
     background: #1f1520; color: #f87171; border-color: #991b1b;
 }
@@ -5070,6 +5267,9 @@ QPushButton#live_btn_active:hover { background: #ef4444; }
 
 QPushButton#telegram_btn { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
 QPushButton#telegram_btn:hover { background: #2563eb; color: #fff; }
+
+QPushButton#discord_btn { background: #eef0ff; color: #4752c4; border-color: #c7ccff; }
+QPushButton#discord_btn:hover { background: #5865f2; color: #fff; }
 
 QPushButton#danger_btn { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
 QPushButton#danger_btn:hover { background: #dc2626; color: #fff; }
@@ -5905,6 +6105,97 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 time.sleep(0.3)  # Telegram rate limit
             self.log_alert(f"📊 Riport elküldve: {sent} sikeres, {failed} hibás.")
 
+        # ── Discord (webhook) ──────────────────────────────────────────────
+        def refresh_discord_status(self):
+            if self.discord_enabled and self.discord_webhook_url:
+                self.discord_status.setText(self.tr_("discord_active"))
+            else:
+                self.discord_status.setText(self.tr_("discord_off"))
+
+        def configure_discord(self):
+            url, ok = QInputDialog.getText(
+                self,
+                "Discord webhook URL",
+                "Webhook URL:\n"
+                "Discord szerver → jobb klikk a csatornán → Csatorna szerkesztése →\n"
+                "Integrációk → Webhookok → Új webhook → Webhook URL másolása\n"
+                "(pl. https://discord.com/api/webhooks/123…/abc…)",
+                text=self.discord_webhook_url,
+            )
+            if not ok:
+                return
+            self.discord_webhook_url = url.strip()
+            self.discord_enabled = bool(self.discord_webhook_url)
+            # Mentés lemezre, hogy újraindítás után is megmaradjon
+            save_discord_config(self.discord_webhook_url)
+            self.refresh_discord_status()
+            if self.discord_enabled:
+                ok, err = send_discord_message(
+                    self.discord_webhook_url,
+                    embeds=[{
+                        "title": "🤖 AI Eszközelemző Pro",
+                        "description": "✅ Discord kapcsolat aktív és működik!",
+                        "color": DISCORD_COLOR_INFO,
+                    }],
+                )
+                if ok:
+                    self.log_alert("✅ Discord tesztüzenet elküldve.")
+                else:
+                    self.log_alert(f"❌ Discord hiba: {err}")
+
+        def send_discord_test(self):
+            """Send a standalone test message to Discord."""
+            if not self.discord_enabled:
+                self.log_alert("❌ Discord nincs beállítva. Először konfiguráld.")
+                return
+            ok, err = send_discord_message(
+                self.discord_webhook_url,
+                embeds=[{
+                    "title": "🤖 AI Eszközelemző Pro – Tesztüzenet",
+                    "description": (
+                        f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
+                        "✅ Kapcsolat rendben."
+                    ),
+                    "color": DISCORD_COLOR_INFO,
+                }],
+            )
+            if ok:
+                self.log_alert("✅ Discord tesztüzenet elküldve.")
+            else:
+                self.log_alert(f"❌ Discord hiba: {err}")
+
+        def send_discord_full_report(self):
+            """Send the last analysis results to Discord as formatted embeds."""
+            if not self.discord_enabled:
+                self.log_alert("❌ Discord nincs beállítva. Először konfiguráld.")
+                return
+            if not self._last_results:
+                self.log_alert("❌ Nincs elemzési eredmény. Futtass elemzést előbb.")
+                return
+            _, currency, _ = self.resolve_rate_currency()
+            header = (
+                "📊 **AI Eszközelemző Pro – Elemzési Riport**\n"
+                f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
+                f"💱 Deviza: **{currency}**  ·  📋 Eszközök: **{len(self._last_results)}**"
+            )
+            ok, err = send_discord_message(self.discord_webhook_url, content=header)
+            if not ok:
+                self.log_alert(f"❌ Discord fejléc hiba: {err}")
+                return
+            sent, failed = 0, 0
+            # Discord max. 10 embed / üzenet → kötegelve küldjük
+            embeds = [format_discord_result_embed(r, currency) for r in self._last_results]
+            for i in range(0, len(embeds), 10):
+                batch = embeds[i:i + 10]
+                ok, err = send_discord_message(self.discord_webhook_url, embeds=batch)
+                if ok:
+                    sent += len(batch)
+                else:
+                    failed += len(batch)
+                    self.log_alert(f"❌ Discord küldési hiba: {err}")
+                time.sleep(0.5)  # Discord rate limit
+            self.log_alert(f"📊 Discord riport elküldve: {sent} sikeres, {failed} hibás.")
+
         def trigger_alert_channels(self, message):
             notify_price_change("Pro riasztás", message)
             if self.sound_alerts_enabled:
@@ -5918,6 +6209,13 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 )
                 if not ok:
                     self.log_alert(f"❌ Telegram küldés sikertelen: {err}")
+            if self.discord_enabled:
+                ok, err = send_discord_message(
+                    self.discord_webhook_url,
+                    embeds=[format_discord_alert_embed(message)],
+                )
+                if not ok:
+                    self.log_alert(f"❌ Discord küldés sikertelen: {err}")
 
         def log_alert(self, text):
             now_text = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
