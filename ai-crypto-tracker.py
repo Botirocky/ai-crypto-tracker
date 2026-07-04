@@ -437,6 +437,38 @@ ASSETS = {
     "Aptos": "APT-USD",
     "Arbitrum": "ARB-USD",
     "Optimism": "OP-USD",
+    # További ismert kriptók (Yahoo *-USD)
+    "Bitcoin Cash": "BCH-USD",
+    "Polygon": "MATIC-USD",
+    "Toncoin": "TON11419-USD",
+    "Sui": "SUI20947-USD",
+    "Internet Computer": "ICP-USD",
+    "Monero": "XMR-USD",
+    "Ethereum Classic": "ETC-USD",
+    "Maker": "MKR-USD",
+    "Aave": "AAVE-USD",
+    "Injective": "INJ-USD",
+    "Tezos": "XTZ-USD",
+    "Theta Network": "THETA-USD",
+    "The Graph": "GRT-USD",
+    "Kaspa": "KAS-USD",
+    "Celestia": "TIA-USD",
+    "THORChain": "RUNE-USD",
+    "Quant": "QNT-USD",
+    "MultiversX": "EGLD-USD",
+    "Immutable": "IMX-USD",
+    "Fetch.ai": "FET-USD",
+    "Ethena": "ENA-USD",
+    "Ondo": "ONDO-USD",
+    "Sei": "SEI-USD",
+    "Gala": "GALA-USD",
+    "Wrapped Bitcoin": "WBTC-USD",
+    "Tether (USDT)": "USDT-USD",
+    # Memecoinok
+    "Pepe": "PEPE-USD",
+    "dogwifhat": "WIF-USD",
+    "Bonk": "BONK-USD",
+    "Floki": "FLOKI-USD",
     # További részvények / blue chip
     "JPMorgan Chase": "JPM",
     "Visa": "V",
@@ -447,6 +479,60 @@ ASSETS = {
     "Spotify": "SPOT",
     "Berkshire Hathaway": "BRK-B",
     "Intel": "INTC",
+    # További US blue chip részvények
+    "Broadcom": "AVGO",
+    "Eli Lilly": "LLY",
+    "Johnson & Johnson": "JNJ",
+    "Walmart": "WMT",
+    "Mastercard": "MA",
+    "ExxonMobil": "XOM",
+    "Procter & Gamble": "PG",
+    "Home Depot": "HD",
+    "Oracle": "ORCL",
+    "Adobe": "ADBE",
+    "Salesforce": "CRM",
+    "Pfizer": "PFE",
+    "Boeing": "BA",
+    "Starbucks": "SBUX",
+    "PayPal": "PYPL",
+    "Uber": "UBER",
+    "Qualcomm": "QCOM",
+    "Cisco": "CSCO",
+    "Nike": "NKE",
+    "Bank of America": "BAC",
+    "Costco": "COST",
+    "PepsiCo": "PEP",
+    "Palantir": "PLTR",
+    # Globális részvények (USD-ben jegyzett ADR / NYSE)
+    "ASML": "ASML",
+    "Novo Nordisk": "NVO",
+    "TSMC": "TSM",
+    "Alibaba": "BABA",
+    "Toyota": "TM",
+    "Ferrari": "RACE",
+    "Shell": "SHEL",
+    # Devizák (Forex, Yahoo XXXUSD=X – 1 egység az adott devizában USD-ben).
+    # HUF nézetben a USD/HUF árfolyammal felszorozva a XXX/HUF keresztárfolyamot adja.
+    "Euró (EUR)": "EURUSD=X",
+    "Brit font (GBP)": "GBPUSD=X",
+    "Japán jen (JPY)": "JPYUSD=X",
+    "Svájci frank (CHF)": "CHFUSD=X",
+    "Kanadai dollár (CAD)": "CADUSD=X",
+    "Ausztrál dollár (AUD)": "AUDUSD=X",
+    "Új-zélandi dollár (NZD)": "NZDUSD=X",
+    "Kínai jüan (CNY)": "CNYUSD=X",
+    "Hongkongi dollár (HKD)": "HKDUSD=X",
+    "Szingapúri dollár (SGD)": "SGDUSD=X",
+    "Svéd korona (SEK)": "SEKUSD=X",
+    "Norvég korona (NOK)": "NOKUSD=X",
+    "Lengyel złoty (PLN)": "PLNUSD=X",
+    "Cseh korona (CZK)": "CZKUSD=X",
+    "Román lej (RON)": "RONUSD=X",
+    "Török líra (TRY)": "TRYUSD=X",
+    "Mexikói peso (MXN)": "MXNUSD=X",
+    "Dél-afrikai rand (ZAR)": "ZARUSD=X",
+    "Indiai rúpia (INR)": "INRUSD=X",
+    "Brazil real (BRL)": "BRLUSD=X",
 }
 
 ASSET_CATEGORIES = {
@@ -456,6 +542,11 @@ ASSET_CATEGORIES = {
         "Polkadot", "Avalanche", "Chainlink", "Litecoin", "Stellar", "Cosmos",
         "NEAR Protocol", "Uniswap", "Algorand", "Filecoin", "Hedera", "VeChain",
         "Shiba Inu", "Aptos", "Arbitrum", "Optimism",
+        "Bitcoin Cash", "Polygon", "Toncoin", "Sui", "Internet Computer", "Monero",
+        "Ethereum Classic", "Maker", "Aave", "Injective", "Tezos", "Theta Network",
+        "The Graph", "Kaspa", "Celestia", "THORChain", "Quant", "MultiversX",
+        "Immutable", "Fetch.ai", "Ethena", "Ondo", "Sei", "Gala", "Wrapped Bitcoin",
+        "Tether (USDT)", "Pepe", "dogwifhat", "Bonk", "Floki",
     ],
     "NFT": [
         "ApeCoin (NFT)", "Decentraland (NFT/Metaverse)", "The Sandbox (NFT/Metaverse)",
@@ -466,10 +557,26 @@ ASSET_CATEGORIES = {
         "Apple", "Microsoft", "NVIDIA", "Amazon", "Meta", "Alphabet (Google)", "Tesla",
         "AMD", "Netflix", "JPMorgan Chase", "Visa", "Coca-Cola", "SAP", "McDonald's",
         "Walt Disney", "Spotify", "Berkshire Hathaway", "Intel",
+        "Broadcom", "Eli Lilly", "Johnson & Johnson", "Walmart", "Mastercard",
+        "ExxonMobil", "Procter & Gamble", "Home Depot", "Oracle", "Adobe", "Salesforce",
+        "Pfizer", "Boeing", "Starbucks", "PayPal", "Uber", "Qualcomm", "Cisco", "Nike",
+        "Bank of America", "Costco", "PepsiCo", "Palantir",
+    ],
+    "World Stock": [
+        "ASML", "Novo Nordisk", "TSMC", "Alibaba", "Toyota", "Ferrari", "Shell",
     ],
     "HU Stock": [
         "OTP Bank", "MOL", "Richter Gedeon", "Magyar Telekom", "4iG", "Opus Global",
         "Waberer's", "Masterplast", "AKKO Invest", "Appeninn",
+    ],
+    "Forex": [
+        "Euró (EUR)", "Brit font (GBP)", "Japán jen (JPY)", "Svájci frank (CHF)",
+        "Kanadai dollár (CAD)", "Ausztrál dollár (AUD)", "Új-zélandi dollár (NZD)",
+        "Kínai jüan (CNY)", "Hongkongi dollár (HKD)", "Szingapúri dollár (SGD)",
+        "Svéd korona (SEK)", "Norvég korona (NOK)", "Lengyel złoty (PLN)",
+        "Cseh korona (CZK)", "Román lej (RON)", "Török líra (TRY)",
+        "Mexikói peso (MXN)", "Dél-afrikai rand (ZAR)", "Indiai rúpia (INR)",
+        "Brazil real (BRL)",
     ],
 }
 
@@ -479,6 +586,9 @@ OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
+# NVIDIA NIM (build.nvidia.com) – OpenAI-kompatibilis chat completions végpont
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_MODEL_DEFAULT = "meta/llama-3.3-70b-instruct"
 REQUEST_TIMEOUT = 15
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; AssetTracker/1.0)",
@@ -2542,6 +2652,41 @@ def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, tim
         return None, str(e)
 
 
+def get_nvidia_commentary(result, currency, api_key, model=NVIDIA_MODEL_DEFAULT, timeout=20):
+    """AI kommentár az NVIDIA NIM (build.nvidia.com) OpenAI-kompatibilis API-jával."""
+    if not api_key:
+        return None, "Nincs NVIDIA API kulcs."
+    prompt = _build_ai_prompt(result, currency)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Te egy konzervativ penzugyi elemzo asszisztens vagy."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+    }
+    try:
+        r = http_post(NVIDIA_API_URL, headers=headers, json=payload, timeout=timeout)
+        data = r.json()
+        if r.status_code >= 400:
+            err = data.get("error") if isinstance(data, dict) else None
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("code") or str(err)
+            else:
+                msg = str(err) if err else (data.get("detail") if isinstance(data, dict) else None) or r.text or r.reason
+            return None, f"NVIDIA API ({r.status_code}): {msg}"
+        content = (((data.get("choices") or [None])[0] or {}).get("message") or {}).get("content")
+        if not content:
+            return None, "Ures NVIDIA valasz."
+        return str(content).strip(), None
+    except (requests.RequestException, ValueError, TypeError) as e:
+        return None, str(e)
+
+
 def get_claude_cli_commentary(result, currency, model=None, timeout=90):
     """AI kommentár a helyi 'claude' CLI-n (Claude Code) keresztül, headless módban.
     Az előfizetéses (OAuth) bejelentkezést használja — nem kell API-kulcs/kredit."""
@@ -3757,8 +3902,10 @@ if QT_AVAILABLE:
             self.claude_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             self.claude_model = ANTHROPIC_MODEL_DEFAULT
             self.claude_cli_model = ""  # üres = a Claude Code alap modellje
+            self.nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+            self.nvidia_model = NVIDIA_MODEL_DEFAULT
             # Melyik szolgáltatót használja az AI kommentár:
-            # "openai" | "claude" (API) | "claude_cli" (helyi előfizetés)
+            # "openai" | "claude" (API) | "claude_cli" (helyi előfizetés) | "nvidia"
             self.ai_provider = "claude" if self.claude_api_key else "openai"
             self.csv_autosave_enabled = True
             self.csv_path = str(Path.cwd() / "live_history.csv")
@@ -5889,6 +6036,10 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 provider = "Claude API"
                 model_name = self.claude_model
                 ready = bool(self.claude_api_key)
+            elif self.ai_provider == "nvidia":
+                provider = "NVIDIA"
+                model_name = self.nvidia_model
+                ready = bool(self.nvidia_api_key)
             else:
                 provider = "OpenAI"
                 model_name = self.ai_model
@@ -5905,8 +6056,9 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 "OpenAI (GPT) – API kulcs, fizetős",
                 "Claude API (Anthropic) – API kulcs, fizetős",
                 "Claude helyi (előfizetés, claude CLI) – ingyenes, ha be vagy lépve",
+                "NVIDIA (build.nvidia.com) – API kulcs, ingyenes kvótával",
             ]
-            cur = {"openai": 0, "claude": 1, "claude_cli": 2}.get(self.ai_provider, 0)
+            cur = {"openai": 0, "claude": 1, "claude_cli": 2, "nvidia": 3}.get(self.ai_provider, 0)
             prov, ok = QInputDialog.getItem(
                 self, "AI szolgáltató",
                 "Válaszd ki, melyik AI adja a kommentárt:",
@@ -5931,6 +6083,32 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     f"AI beállítva: Claude helyi CLI / "
                     f"{self.claude_cli_model or 'alap modell'} (előfizetés)"
                 )
+                self.refresh_ai_status()
+                return
+            if prov.startswith("NVIDIA"):
+                self.ai_provider = "nvidia"
+                key, ok1 = QInputDialog.getText(
+                    self, "NVIDIA API kulcs",
+                    "NVIDIA API key (nvapi-…):\n"
+                    "Kulcs igénylése: https://build.nvidia.com/\n"
+                    "(Jelentkezz be → válassz modellt → Get API Key)",
+                    text=self.nvidia_api_key,
+                )
+                if not ok1:
+                    return
+                model, ok2 = QInputDialog.getText(
+                    self, "NVIDIA modell",
+                    "Modell azonosító:\n"
+                    "Elérhető modellek: https://build.nvidia.com/models\n"
+                    f"(alap: {NVIDIA_MODEL_DEFAULT})",
+                    text=self.nvidia_model,
+                )
+                if not ok2:
+                    return
+                self.nvidia_api_key = key.strip()
+                self.nvidia_model = model.strip() if model.strip() else NVIDIA_MODEL_DEFAULT
+                if self.nvidia_api_key:
+                    self.log_alert(f"AI beállítva: NVIDIA / {self.nvidia_model}")
                 self.refresh_ai_status()
                 return
             if prov.startswith("Claude API"):
@@ -6391,10 +6569,20 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                                 claude_api_key=self.claude_api_key,
                                 claude_model=self.claude_model,
                             )
+                        elif prov == "nvidia" and self.nvidia_api_key:
+                            ai_text, ai_err = get_nvidia_commentary(
+                                result, currency,
+                                api_key=self.nvidia_api_key, model=self.nvidia_model,
+                            )
                         elif prov == "openai" and self.ai_api_key:
                             ai_text, ai_err = get_ai_commentary(
                                 result=result, currency=currency,
                                 api_key=self.ai_api_key, model=self.ai_model,
+                            )
+                        else:
+                            ai_err = (
+                                f"Nincs beállítva API kulcs a(z) '{prov}' szolgáltatóhoz. "
+                                f"Nyisd meg az 'AI szolgáltató' beállítást és add meg a kulcsot."
                             )
                         if ai_text:
                             result["ai_commentary"] = ai_text
