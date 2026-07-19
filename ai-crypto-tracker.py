@@ -581,6 +581,16 @@ ASSET_CATEGORIES = {
 }
 
 FX_URL = "https://api.exchangerate-api.com/v4/latest/USD"
+# Megjelenítési valuták a HUF-auto és a "Mindig USD" opción felül.
+# (Az exchangerate-api mind támogatja; kód → szimbólum a chip/label-hez.)
+EXTRA_DISPLAY_CURRENCIES = [
+    ("EUR", "€"),
+    ("GBP", "£"),
+    ("CHF", "CHF"),
+    ("JPY", "¥"),
+    ("PLN", "zł"),
+    ("CZK", "Kč"),
+]
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -1016,41 +1026,55 @@ def http_post(url, timeout=REQUEST_TIMEOUT, **kwargs):
 
 
 # ---- USD → HUF ----
-def get_rate(timeout=REQUEST_TIMEOUT, strict=True):
+# Legutóbb letöltött USD-alapú árfolyamok (USD→X). A BÉT (.BD, HUF-alapú)
+# instrumentumok tetszőleges megjelenítési valutára váltásához kell a HUF-kulcs.
+_LAST_FX_RATES = {}
+
+
+def get_rate(currency="HUF", timeout=REQUEST_TIMEOUT, strict=True):
+    """1 USD = ? a kért megjelenítési valutában (USD→currency)."""
+    cur = (currency or "HUF").strip().upper()
     errors = []
 
     try:
         r = http_get(FX_URL, timeout=timeout)
         r.raise_for_status()
-        return float(r.json()["rates"]["HUF"])
+        rates = r.json()["rates"]
+        _LAST_FX_RATES.clear()
+        _LAST_FX_RATES.update(rates)
+        return float(rates[cur])
     except (requests.RequestException, KeyError, ValueError, TypeError) as e:
         errors.append(f"exchangerate-api: {e}")
 
-    # Fallback: Yahoo FX árfolyam
-    try:
-        yahoo_fx = "https://query1.finance.yahoo.com/v8/finance/chart/USDHUF=X?range=1d&interval=5m"
-        r = http_get(yahoo_fx, timeout=timeout, headers=YAHOO_HEADERS)
-        r.raise_for_status()
-        data = r.json()
-        chart = data.get("chart") or {}
-        result = (chart.get("result") or [None])[0]
-        closes = (((result or {}).get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
-        closes = [v for v in closes if v is not None]
-        if not closes:
-            raise ValueError("Yahoo FX close érték hiányzik")
-        return float(closes[-1])
-    except (requests.RequestException, KeyError, ValueError, TypeError) as e:
-        errors.append(f"yahoo-fx: {e}")
+    # Fallback: Yahoo FX árfolyam (csak a HUF-ra van dedikált tartalék forrás)
+    if cur == "HUF":
+        try:
+            yahoo_fx = "https://query1.finance.yahoo.com/v8/finance/chart/USDHUF=X?range=1d&interval=5m"
+            r = http_get(yahoo_fx, timeout=timeout, headers=YAHOO_HEADERS)
+            r.raise_for_status()
+            data = r.json()
+            chart = data.get("chart") or {}
+            result = (chart.get("result") or [None])[0]
+            closes = (((result or {}).get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+            closes = [v for v in closes if v is not None]
+            if not closes:
+                raise ValueError("Yahoo FX close érték hiányzik")
+            val = float(closes[-1])
+            _LAST_FX_RATES["HUF"] = val
+            return val
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
+            errors.append(f"yahoo-fx: {e}")
 
-    error = RuntimeError("USD→HUF árfolyam nem elérhető | " + " | ".join(errors))
+    error = RuntimeError(f"USD→{cur} árfolyam nem elérhető | " + " | ".join(errors))
     if strict:
         raise error
     return 1.0
 
 
-def get_effective_rate():
+def get_effective_rate(currency="HUF"):
+    cur = (currency or "HUF").strip().upper()
     try:
-        return get_rate(strict=True), "HUF", None
+        return get_rate(cur, strict=True), cur, None
     except Exception as e:
         return 1.0, "USD", str(e)
 
@@ -1067,11 +1091,23 @@ def yahoo_price_display_multiplier(symbol, rate, display_currency):
         r = 1.0
     sym = str(symbol or "").strip().upper()
     is_bet = sym.endswith(".BD")
+    if not is_bet:
+        # USD-alapú instrumentum (kripto, US/world részvény, forex): USD→cur szorzó.
+        # USD megjelenítésnél r==1.0, HUF-nál r==USD/HUF — visszaadja a régi viselkedést.
+        return r
+    # BÉT (.BD) instrumentum HUF-ban jegyezve → HUF-ból váltunk a megjelenítési valutára.
     if cur == "HUF":
-        return 1.0 if is_bet else r
-    if is_bet:
-        return 1.0 / r
-    return 1.0
+        return 1.0
+    huf = _LAST_FX_RATES.get("HUF")
+    try:
+        huf = float(huf)
+    except (TypeError, ValueError):
+        huf = None
+    if not huf or huf <= 0:
+        # Nincs gyorsítótárazott HUF-árfolyam: USD esetén a régi 1/r tartalék.
+        return 1.0 / r if cur == "USD" else 1.0
+    # HUF→cur = (USD→cur) / (USD→HUF)
+    return r / huf
 
 
 def get_usdhuf_vs_ma20(timeout=REQUEST_TIMEOUT):
@@ -3459,12 +3495,12 @@ if QT_AVAILABLE:
             self._indicator = None     # {"type": "rsi"/"macd", ...} vagy None
             self.setMinimumHeight(360)
             self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            self.setStyleSheet("background: #0d1117;")
+            self.setStyleSheet("background: #0f172a; border-radius: 14px;")
 
         def set_dark_mode(self, dark):
             self._dark_mode = dark
-            bg = "#0d1117" if dark else "#f6f8fa"
-            self.setStyleSheet(f"background: {bg};")
+            bg = "#0f172a" if dark else "#f4f7fc"
+            self.setStyleSheet(f"background: {bg}; border-radius: 14px;")
             self.update()
 
         def set_data(self, candles, patterns, title="", currency="HUF", x_labels=None,
@@ -4019,7 +4055,7 @@ if QT_AVAILABLE:
             self.cur_label = QLabel("Megjelenítés:")
             cur_row.addWidget(self.cur_label)
             self.currency_combo = QComboBox()
-            self.currency_combo.addItems(["Auto (HUF ha elérhető)", "Mindig USD"])
+            self._populate_currency_combo()
             self.currency_combo.currentIndexChanged.connect(self.on_display_currency_changed)
             cur_row.addWidget(self.currency_combo, 1)
             left_col.addLayout(cur_row)
@@ -4730,8 +4766,7 @@ if QT_AVAILABLE:
             self.cur_label.setText(t("display_label"))
             cur_idx = self.currency_combo.currentIndex()
             self.currency_combo.blockSignals(True)
-            self.currency_combo.clear()
-            self.currency_combo.addItems([t("currency_auto"), t("currency_usd")])
+            self._populate_currency_combo()
             self.currency_combo.setCurrentIndex(cur_idx)
             self.currency_combo.blockSignals(False)
             self.btn_select_all.setText(t("select_all"))
@@ -4984,165 +5019,191 @@ if QT_AVAILABLE:
 
         def apply_styles(self):
             self.setStyleSheet("""
-/* ── DARK THEME ── */
+/* ── DARK THEME · "Aurum" premium fintech (gold + violet, glass surfaces) ──
+   Design-system tokens (ui-ux-pro-max › Fintech/Crypto):
+     bg-deep #0f172a · surface #1a2336 · elevated #222b40 · glass-line rgba(255,255,255,.06)
+     fg #f8fafc · muted-fg #94a3b8 · border #334155
+     primary/gold #f59e0b · secondary #fbbf24 · accent/violet #8b5cf6
+     danger #ef4444 · ring #f59e0b (3px focus). No pure black; hairline lit borders. */
 
 /* Base */
 QWidget {
-    background-color: #0b0f1a;
-    color: #cbd5e1;
-    font-family: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    background-color: #0f172a;
+    color: #e8edf6;
+    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
     font-size: 13px;
 }
-QWidget:disabled { color: #334155; }
+QWidget:disabled { color: #4a5772; }
+
+/* Adat-widgetek monospace-e — tabuláris számjegyek (ár, %, idő nem ugrál) */
+QListWidget, QTextEdit, QTableWidget, QLineEdit, QTimeEdit,
+QLabel#stat_chip, QLabel#fng_chip {
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'DejaVu Sans Mono', monospace;
+}
 
 /* Labels */
-QLabel { color: #cbd5e1; font-size: 13px; }
-QLabel#title_label { font-size: 16px; font-weight: 700; padding: 2px 0; }
+QLabel { color: #e8edf6; font-size: 13px; }
+QLabel#title_label { font-size: 17px; font-weight: 800; padding: 2px 0; color: #f8fafc; letter-spacing: 0.01em; }
 QLabel#stat_chip {
-    background: #1e2d45;
-    border: 1px solid #2d4a6e;
-    border-radius: 10px;
-    padding: 3px 10px;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #33290f, stop:1 #2a2411);
+    border: 1px solid #7a5f22;
+    border-radius: 11px;
+    padding: 3px 11px;
     font-size: 11px;
-    color: #93c5fd;
-    font-weight: 600;
+    color: #fcd34d;
+    font-weight: 700;
 }
-QLabel#stat_chip_dim { font-size: 11px; color: #475569; padding: 3px 4px; }
-QLabel#status_label  { font-size: 11px; color: #475569; padding: 1px 4px; }
+QLabel#stat_chip_dim { font-size: 11px; color: #94a3b8; padding: 3px 4px; }
+QLabel#status_label  { font-size: 11px; color: #94a3b8; padding: 1px 4px; }
 QLabel#fng_chip {
-    background: #1e2d45; border: 1px solid #2d4a6e;
-    border-radius: 10px; padding: 3px 10px;
-    font-size: 11px; font-weight: 700; color: #93c5fd;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #33290f, stop:1 #2a2411);
+    border: 1px solid #7a5f22;
+    border-radius: 11px; padding: 3px 11px;
+    font-size: 11px; font-weight: 800; color: #fcd34d;
 }
 
 /* Scrollable containers */
 QScrollArea { border: none; background: transparent; }
 
-/* List + Text */
+/* List + Text — glass surface */
 QListWidget, QTextEdit {
-    background-color: #111827;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    padding: 5px;
-    color: #e2e8f0;
-    selection-background-color: #3b82f6;
+    background-color: #1a2336;
+    border: 1px solid #2c374d;
+    border-top: 1px solid #3a4a66;
+    border-radius: 14px;
+    padding: 6px;
+    color: #e8edf6;
+    selection-background-color: #8b5cf6;
     selection-color: #ffffff;
     font-size: 12px;
 }
-QListWidget::item { padding: 5px 8px; border-radius: 6px; margin: 1px 0; }
-QListWidget::item:selected { background: #1d4ed8; color: #fff; }
-QListWidget::item:hover:!selected { background: #1e293b; }
+QListWidget::item { padding: 6px 9px; border-radius: 8px; margin: 1px 0; }
+QListWidget::item:selected { background: #6d28d9; color: #fff; }
+QListWidget::item:hover:!selected { background: #232f47; }
 
 /* Inputs */
 QLineEdit, QTimeEdit {
-    background: #111827;
-    color: #e2e8f0;
-    border: 1px solid #1e293b;
-    border-radius: 8px;
-    padding: 6px 10px;
+    background: #141d30;
+    color: #e8edf6;
+    border: 1px solid #2c374d;
+    border-radius: 10px;
+    padding: 7px 11px;
     font-size: 12px;
+    selection-background-color: #8b5cf6;
+    selection-color: #ffffff;
 }
-QLineEdit:focus, QTimeEdit:focus { border-color: #3b82f6; }
+QLineEdit:focus, QTimeEdit:focus { border: 2px solid #f59e0b; }
 
 /* ComboBox (generic) */
 QComboBox {
-    background: #111827;
-    color: #e2e8f0;
-    border: 1px solid #1e293b;
-    border-radius: 8px;
-    padding: 5px 10px;
+    background: #141d30;
+    color: #e8edf6;
+    border: 1px solid #2c374d;
+    border-radius: 10px;
+    padding: 6px 11px;
 }
-QComboBox:hover { border-color: #3b82f6; }
+QComboBox:hover { border-color: #64748b; }
+QComboBox:focus { border: 2px solid #f59e0b; }
 QComboBox::drop-down { border: none; padding-right: 6px; }
 QComboBox QAbstractItemView {
-    background: #1e293b;
-    border: 1px solid #334155;
-    color: #e2e8f0;
-    selection-background-color: #3b82f6;
+    background: #1c2740;
+    border: 1px solid #3b4d6b;
+    border-radius: 10px;
+    color: #e8edf6;
+    padding: 4px;
+    selection-background-color: #8b5cf6;
     outline: 0;
 }
 
-/* Nav ComboBox */
+/* Nav ComboBox — elevated header pill */
 QComboBox#nav_combo {
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #1e293b, stop:1 #111827);
-    color: #f1f5f9;
-    border: 1px solid #334155;
-    border-radius: 10px;
+        stop:0 #222b40, stop:1 #172035);
+    color: #f8fafc;
+    border: 1px solid #3b4d6b;
+    border-radius: 12px;
     padding: 8px 36px 8px 16px;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 800;
     min-height: 34px;
 }
-QComboBox#nav_combo:hover { border-color: #3b82f6; color: #fff; }
+QComboBox#nav_combo:hover { border-color: #f59e0b; color: #fff; }
 QComboBox#nav_combo::drop-down { border: none; width: 30px; }
 QComboBox#nav_combo QAbstractItemView {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    color: #e2e8f0;
-    padding: 4px;
-    selection-background-color: #2563eb;
+    background: #1c2740;
+    border: 1px solid #3b4d6b;
+    border-radius: 12px;
+    color: #e8edf6;
+    padding: 5px;
+    selection-background-color: #f59e0b;
+    selection-color: #0f172a;
     outline: 0;
 }
 QComboBox#nav_combo QAbstractItemView::item {
     padding: 9px 16px;
-    border-radius: 6px;
+    border-radius: 8px;
     min-height: 28px;
 }
 
-/* Buttons */
+/* Buttons — subtle glass */
 QPushButton {
-    background: #1e293b;
-    color: #cbd5e1;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 7px 14px;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #232e46, stop:1 #1a2336);
+    color: #e8edf6;
+    border: 1px solid #33445f;
+    border-radius: 10px;
+    padding: 7px 15px;
     font-weight: 600;
     font-size: 12px;
 }
 QPushButton:hover {
-    background: #273549;
-    color: #f1f5f9;
-    border-color: #475569;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #2b3a58, stop:1 #202b42);
+    color: #f8fafc;
+    border-color: #566b8c;
 }
 QPushButton:pressed {
-    background: #0f172a;
-    border-color: #3b82f6;
-    color: #93c5fd;
+    background: #141d30;
+    border-color: #f59e0b;
+    color: #fcd34d;
 }
+QPushButton:focus { border: 2px solid #f59e0b; }
 
 QPushButton#primary_btn {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #16a34a, stop:1 #22c55e);
+        stop:0 #15803d, stop:1 #22c55e);
     color: #fff;
     border: none;
     font-size: 13px;
-    padding: 9px 22px;
-    border-radius: 10px;
-    font-weight: 700;
+    padding: 10px 24px;
+    border-radius: 12px;
+    font-weight: 800;
 }
 QPushButton#primary_btn:hover {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #22c55e, stop:1 #4ade80);
 }
-QPushButton#primary_btn:pressed { background: #15803d; }
+QPushButton#primary_btn:pressed { background: #166534; }
+QPushButton#primary_btn:focus { border: 2px solid #86efac; }
 
 QPushButton#live_btn {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #3b82f6);
-    color: #fff;
+        stop:0 #b45309, stop:1 #f59e0b);
+    color: #1a1206;
     border: none;
     font-size: 13px;
-    padding: 9px 22px;
-    border-radius: 10px;
-    font-weight: 700;
+    padding: 10px 24px;
+    border-radius: 12px;
+    font-weight: 800;
 }
 QPushButton#live_btn:hover {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #3b82f6, stop:1 #60a5fa);
+        stop:0 #f59e0b, stop:1 #fbbf24);
 }
-QPushButton#live_btn:pressed { background: #1d4ed8; }
+QPushButton#live_btn:pressed { background: #92400e; color: #fff; }
+QPushButton#live_btn:focus { border: 2px solid #fde68a; }
 
 QPushButton#live_btn_active {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
@@ -5150,160 +5211,173 @@ QPushButton#live_btn_active {
     color: #fff;
     border: none;
     font-size: 13px;
-    padding: 9px 22px;
-    border-radius: 10px;
-    font-weight: 700;
+    padding: 10px 24px;
+    border-radius: 12px;
+    font-weight: 800;
 }
 QPushButton#live_btn_active:hover { background: #ef4444; }
 
 QPushButton#telegram_btn {
-    background: #1e3a5f; color: #60a5fa; border-color: #2563eb;
+    background: #16273f; color: #7cc0ff; border-color: #2563eb;
 }
 QPushButton#telegram_btn:hover { background: #2563eb; color: #fff; }
 
 QPushButton#discord_btn {
-    background: #2b2d52; color: #c1c6ff; border-color: #5865f2;
+    background: #221f4a; color: #c1c6ff; border-color: #5865f2;
 }
 QPushButton#discord_btn:hover { background: #5865f2; color: #fff; }
 
 QPushButton#danger_btn {
-    background: #1f1520; color: #f87171; border-color: #991b1b;
+    background: #241019; color: #f87171; border-color: #991b1b;
 }
 QPushButton#danger_btn:hover { background: #991b1b; color: #fff; }
 
 /* Category chips */
 QPushButton#chip {
-    background: #1e293b; color: #64748b;
-    border: 1px solid #334155;
-    border-radius: 10px; padding: 4px 12px;
+    background: #1a2336; color: #94a3b8;
+    border: 1px solid #33445f;
+    border-radius: 11px; padding: 5px 13px;
     font-size: 11px; font-weight: 600;
 }
-QPushButton#chip:hover { background: #273549; color: #94a3b8; }
+QPushButton#chip:hover { background: #232f47; color: #cbd5e1; }
 QPushButton#chip_active {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #7c3aed);
+        stop:0 #f59e0b, stop:1 #8b5cf6);
     color: #fff;
     border: none;
-    border-radius: 10px; padding: 4px 12px;
-    font-size: 11px; font-weight: 700;
+    border-radius: 11px; padding: 5px 13px;
+    font-size: 11px; font-weight: 800;
 }
 
 /* CheckBox */
-QCheckBox { color: #cbd5e1; font-size: 13px; spacing: 8px; }
+QCheckBox { color: #e8edf6; font-size: 13px; spacing: 8px; }
 QCheckBox::indicator {
     width: 16px; height: 16px;
-    border: 1px solid #334155;
-    border-radius: 4px;
-    background: #111827;
+    border: 1px solid #33445f;
+    border-radius: 5px;
+    background: #141d30;
 }
 QCheckBox::indicator:checked {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-        stop:0 #2563eb, stop:1 #7c3aed);
-    border-color: #3b82f6;
+        stop:0 #f59e0b, stop:1 #8b5cf6);
+    border-color: #f59e0b;
 }
 
 /* Table */
 QTableWidget {
-    background: #111827;
-    gridline-color: #1e293b;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    color: #e2e8f0;
-    alternate-background-color: #141e2e;
+    background: #1a2336;
+    gridline-color: #263248;
+    border: 1px solid #2c374d;
+    border-radius: 14px;
+    color: #e8edf6;
+    alternate-background-color: #1e2840;
 }
-QTableWidget::item:selected { background: #1e3a5f; color: #93c5fd; }
+QTableWidget::item:selected { background: #33290f; color: #fcd34d; }
 QHeaderView::section {
-    background: #1e293b;
-    color: #64748b;
-    padding: 7px 8px;
+    background: #222b40;
+    color: #94a3b8;
+    padding: 8px 9px;
     border: none;
-    border-right: 1px solid #0b0f1a;
-    border-bottom: 1px solid #0b0f1a;
-    font-weight: 700;
+    border-right: 1px solid #0f172a;
+    border-bottom: 1px solid #0f172a;
+    font-weight: 800;
     font-size: 11px;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
 }
 
 /* Scrollbar */
 QScrollBar:vertical {
-    background: transparent; width: 6px; margin: 0;
+    background: transparent; width: 7px; margin: 0;
 }
 QScrollBar::handle:vertical {
-    background: #334155; border-radius: 3px; min-height: 24px;
+    background: #3a4a66; border-radius: 3px; min-height: 24px;
 }
-QScrollBar::handle:vertical:hover { background: #475569; }
+QScrollBar::handle:vertical:hover { background: #f59e0b; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar:horizontal {
-    background: transparent; height: 6px; margin: 0;
+    background: transparent; height: 7px; margin: 0;
 }
 QScrollBar::handle:horizontal {
-    background: #334155; border-radius: 3px; min-width: 24px;
+    background: #3a4a66; border-radius: 3px; min-width: 24px;
 }
-QScrollBar::handle:horizontal:hover { background: #475569; }
+QScrollBar::handle:horizontal:hover { background: #f59e0b; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
 /* Splitter */
-QSplitter::handle { background: #1e293b; }
+QSplitter::handle { background: #2c374d; }
 
-/* Settings GroupBox */
+/* Settings GroupBox — glass card */
 QGroupBox#settings_group {
-    border: 1px solid #1e293b;
-    border-radius: 12px;
+    border: 1px solid #2c374d;
+    border-radius: 14px;
     margin-top: 8px;
-    padding-top: 6px;
-    background: #111827;
+    padding-top: 8px;
+    background: #1a2336;
     font-size: 12px;
-    font-weight: 700;
-    color: #475569;
+    font-weight: 800;
+    color: #94a3b8;
 }
 QGroupBox#settings_group::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 14px; padding: 0 6px;
-    color: #64748b;
+    color: #fcd34d;
 }
 
 /* Progress bar */
 QProgressBar#analysis_progress {
-    background: #1e293b;
+    background: #222b40;
     border: none; border-radius: 3px;
     max-height: 5px; min-height: 5px;
 }
 QProgressBar#analysis_progress::chunk {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #7c3aed);
+        stop:0 #f59e0b, stop:1 #8b5cf6);
     border-radius: 3px;
 }
 
 /* Frame separator */
-QFrame[frameShape="4"] { color: #1e293b; }
+QFrame[frameShape="4"] { color: #2c374d; }
             """)
 
         def apply_styles_light(self):
             self.setStyleSheet("""
-/* ── LIGHT THEME ── */
+/* ── LIGHT THEME · "Aurum" premium fintech (gold + violet, soft glass) ──
+   Tokens: bg #f4f7fc · surface #ffffff · elevated #ffffff · border #e2e8f0
+     fg #0f172a · muted-fg #64748b · primary/gold #f59e0b · accent/violet #8b5cf6
+     danger #dc2626 · ring #f59e0b (2px focus). Soft shadows via layered borders. */
 
 QWidget {
-    background-color: #f8fafc;
-    color: #1e293b;
-    font-family: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    background-color: #f4f7fc;
+    color: #0f172a;
+    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
     font-size: 13px;
 }
 QWidget:disabled { color: #94a3b8; }
 
-QLabel { color: #1e293b; font-size: 13px; }
-QLabel#title_label { font-size: 16px; font-weight: 700; padding: 2px 0; }
-QLabel#stat_chip {
-    background: #eff6ff; border: 1px solid #bfdbfe;
-    border-radius: 10px; padding: 3px 10px;
-    font-size: 11px; color: #1d4ed8; font-weight: 600;
+/* Adat-widgetek monospace-e — tabuláris számjegyek */
+QListWidget, QTextEdit, QTableWidget, QLineEdit, QTimeEdit,
+QLabel#stat_chip, QLabel#fng_chip {
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'DejaVu Sans Mono', monospace;
 }
-QLabel#stat_chip_dim { font-size: 11px; color: #94a3b8; padding: 3px 4px; }
-QLabel#status_label  { font-size: 11px; color: #94a3b8; padding: 1px 4px; }
+
+QLabel { color: #0f172a; font-size: 13px; }
+QLabel#title_label { font-size: 17px; font-weight: 800; padding: 2px 0; color: #0f172a; letter-spacing: 0.01em; }
+QLabel#stat_chip {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #fff9ec, stop:1 #fef6e7);
+    border: 1px solid #f0cd7a;
+    border-radius: 11px; padding: 3px 11px;
+    font-size: 11px; color: #b45309; font-weight: 700;
+}
+QLabel#stat_chip_dim { font-size: 11px; color: #64748b; padding: 3px 4px; }
+QLabel#status_label  { font-size: 11px; color: #64748b; padding: 1px 4px; }
 QLabel#fng_chip {
-    background: #eff6ff; border: 1px solid #bfdbfe;
-    border-radius: 10px; padding: 3px 10px;
-    font-size: 11px; font-weight: 700; color: #1d4ed8;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #fff9ec, stop:1 #fef6e7);
+    border: 1px solid #f0cd7a;
+    border-radius: 11px; padding: 3px 11px;
+    font-size: 11px; font-weight: 800; color: #b45309;
 }
 
 QScrollArea { border: none; background: transparent; }
@@ -5311,104 +5385,113 @@ QScrollArea { border: none; background: transparent; }
 QListWidget, QTextEdit {
     background: #ffffff;
     border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 5px;
-    color: #1e293b;
-    selection-background-color: #3b82f6;
+    border-radius: 14px;
+    padding: 6px;
+    color: #0f172a;
+    selection-background-color: #8b5cf6;
     selection-color: #ffffff;
     font-size: 12px;
 }
-QListWidget::item { padding: 5px 8px; border-radius: 6px; margin: 1px 0; }
-QListWidget::item:selected { background: #2563eb; color: #fff; }
-QListWidget::item:hover:!selected { background: #f1f5f9; }
+QListWidget::item { padding: 6px 9px; border-radius: 8px; margin: 1px 0; }
+QListWidget::item:selected { background: #7c3aed; color: #fff; }
+QListWidget::item:hover:!selected { background: #eef2f9; }
 
 QLineEdit, QTimeEdit {
     background: #ffffff;
-    color: #1e293b;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 6px 10px;
+    color: #0f172a;
+    border: 1px solid #d5deea;
+    border-radius: 10px;
+    padding: 7px 11px;
     font-size: 12px;
+    selection-background-color: #8b5cf6;
+    selection-color: #ffffff;
 }
-QLineEdit:focus, QTimeEdit:focus { border-color: #3b82f6; }
+QLineEdit:focus, QTimeEdit:focus { border: 2px solid #f59e0b; }
 
 QComboBox {
     background: #ffffff;
-    color: #1e293b;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 5px 10px;
+    color: #0f172a;
+    border: 1px solid #d5deea;
+    border-radius: 10px;
+    padding: 6px 11px;
 }
-QComboBox:hover { border-color: #3b82f6; }
+QComboBox:hover { border-color: #b0bccd; }
+QComboBox:focus { border: 2px solid #f59e0b; }
 QComboBox::drop-down { border: none; padding-right: 6px; }
 QComboBox QAbstractItemView {
     background: #ffffff;
     border: 1px solid #e2e8f0;
-    color: #1e293b;
-    selection-background-color: #3b82f6;
+    border-radius: 10px;
+    color: #0f172a;
+    padding: 4px;
+    selection-background-color: #8b5cf6;
+    selection-color: #ffffff;
     outline: 0;
 }
 
 QComboBox#nav_combo {
     background: #ffffff;
-    color: #1e293b;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
+    color: #0f172a;
+    border: 1px solid #d5deea;
+    border-radius: 12px;
     padding: 8px 36px 8px 16px;
-    font-size: 13px; font-weight: 700;
+    font-size: 13px; font-weight: 800;
     min-height: 34px;
 }
-QComboBox#nav_combo:hover { border-color: #3b82f6; }
+QComboBox#nav_combo:hover { border-color: #f59e0b; }
 QComboBox#nav_combo::drop-down { border: none; width: 30px; }
 QComboBox#nav_combo QAbstractItemView {
     background: #ffffff; border: 1px solid #e2e8f0;
-    border-radius: 10px; color: #1e293b; padding: 4px;
-    selection-background-color: #2563eb; outline: 0;
+    border-radius: 12px; color: #0f172a; padding: 5px;
+    selection-background-color: #f59e0b; selection-color: #ffffff; outline: 0;
 }
 QComboBox#nav_combo QAbstractItemView::item {
-    padding: 9px 16px; border-radius: 6px; min-height: 28px;
+    padding: 9px 16px; border-radius: 8px; min-height: 28px;
 }
 
 QPushButton {
     background: #ffffff;
-    color: #374151;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 7px 14px;
+    color: #334155;
+    border: 1px solid #d5deea;
+    border-radius: 10px;
+    padding: 7px 15px;
     font-weight: 600; font-size: 12px;
 }
-QPushButton:hover { background: #f1f5f9; border-color: #94a3b8; color: #1e293b; }
-QPushButton:pressed { background: #e2e8f0; border-color: #3b82f6; color: #2563eb; }
+QPushButton:hover { background: #eef2f9; border-color: #cbaf6a; color: #0f172a; }
+QPushButton:pressed { background: #e2e8f0; border-color: #f59e0b; color: #b45309; }
+QPushButton:focus { border: 2px solid #f59e0b; }
 
 QPushButton#primary_btn {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #16a34a, stop:1 #22c55e);
+        stop:0 #15803d, stop:1 #22c55e);
     color: #fff; border: none;
-    font-size: 13px; padding: 9px 22px;
-    border-radius: 10px; font-weight: 700;
+    font-size: 13px; padding: 10px 24px;
+    border-radius: 12px; font-weight: 800;
 }
 QPushButton#primary_btn:hover {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #22c55e, stop:1 #4ade80);
 }
-QPushButton#primary_btn:pressed { background: #15803d; }
+QPushButton#primary_btn:pressed { background: #166534; }
+QPushButton#primary_btn:focus { border: 2px solid #16a34a; }
 
 QPushButton#live_btn {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #3b82f6);
-    color: #fff; border: none;
-    font-size: 13px; padding: 9px 22px;
-    border-radius: 10px; font-weight: 700;
+        stop:0 #d97706, stop:1 #f59e0b);
+    color: #ffffff; border: none;
+    font-size: 13px; padding: 10px 24px;
+    border-radius: 12px; font-weight: 800;
 }
-QPushButton#live_btn:hover { background: #3b82f6; }
-QPushButton#live_btn:pressed { background: #1d4ed8; }
+QPushButton#live_btn:hover { background: #f59e0b; }
+QPushButton#live_btn:pressed { background: #b45309; }
+QPushButton#live_btn:focus { border: 2px solid #d97706; }
 
 QPushButton#live_btn_active {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #dc2626, stop:1 #ef4444);
     color: #fff; border: none;
-    font-size: 13px; padding: 9px 22px;
-    border-radius: 10px; font-weight: 700;
+    font-size: 13px; padding: 10px 24px;
+    border-radius: 12px; font-weight: 800;
 }
 QPushButton#live_btn_active:hover { background: #ef4444; }
 
@@ -5422,66 +5505,66 @@ QPushButton#danger_btn { background: #fef2f2; color: #dc2626; border-color: #fca
 QPushButton#danger_btn:hover { background: #dc2626; color: #fff; }
 
 QPushButton#chip {
-    background: #f1f5f9; color: #64748b;
+    background: #eef2f9; color: #64748b;
     border: 1px solid #e2e8f0;
-    border-radius: 10px; padding: 4px 12px;
+    border-radius: 11px; padding: 5px 13px;
     font-size: 11px; font-weight: 600;
 }
-QPushButton#chip:hover { background: #e2e8f0; color: #1e293b; }
+QPushButton#chip:hover { background: #e2e8f0; color: #0f172a; }
 QPushButton#chip_active {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #7c3aed);
+        stop:0 #f59e0b, stop:1 #8b5cf6);
     color: #fff; border: none;
-    border-radius: 10px; padding: 4px 12px;
-    font-size: 11px; font-weight: 700;
+    border-radius: 11px; padding: 5px 13px;
+    font-size: 11px; font-weight: 800;
 }
 
-QCheckBox { color: #1e293b; font-size: 13px; spacing: 8px; }
+QCheckBox { color: #0f172a; font-size: 13px; spacing: 8px; }
 QCheckBox::indicator {
     width: 16px; height: 16px;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px; background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px; background: #fff;
 }
 QCheckBox::indicator:checked {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-        stop:0 #2563eb, stop:1 #7c3aed);
-    border-color: #3b82f6;
+        stop:0 #f59e0b, stop:1 #8b5cf6);
+    border-color: #f59e0b;
 }
 
 QTableWidget {
-    background: #ffffff; gridline-color: #f1f5f9;
-    border: 1px solid #e2e8f0; border-radius: 10px;
-    color: #1e293b; alternate-background-color: #f8fafc;
+    background: #ffffff; gridline-color: #eef2f7;
+    border: 1px solid #e2e8f0; border-radius: 14px;
+    color: #0f172a; alternate-background-color: #f8fafc;
 }
-QTableWidget::item:selected { background: #dbeafe; color: #1e40af; }
+QTableWidget::item:selected { background: #fef6e7; color: #b45309; }
 QHeaderView::section {
-    background: #f8fafc; color: #64748b;
-    padding: 7px 8px; border: none;
-    border-right: 1px solid #f1f5f9;
+    background: #f4f7fc; color: #64748b;
+    padding: 8px 9px; border: none;
+    border-right: 1px solid #eef2f7;
     border-bottom: 1px solid #e2e8f0;
-    font-weight: 700; font-size: 11px;
-    letter-spacing: 0.05em;
+    font-weight: 800; font-size: 11px;
+    letter-spacing: 0.06em;
 }
 
-QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+QScrollBar:vertical { background: transparent; width: 7px; margin: 0; }
 QScrollBar::handle:vertical { background: #cbd5e1; border-radius: 3px; min-height: 24px; }
-QScrollBar::handle:vertical:hover { background: #94a3b8; }
+QScrollBar::handle:vertical:hover { background: #f59e0b; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar:horizontal { background: transparent; height: 6px; margin: 0; }
+QScrollBar:horizontal { background: transparent; height: 7px; margin: 0; }
 QScrollBar::handle:horizontal { background: #cbd5e1; border-radius: 3px; min-width: 24px; }
-QScrollBar::handle:horizontal:hover { background: #94a3b8; }
+QScrollBar::handle:horizontal:hover { background: #f59e0b; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
 QSplitter::handle { background: #e2e8f0; }
 
 QGroupBox#settings_group {
     border: 1px solid #e2e8f0;
-    border-radius: 12px; margin-top: 8px; padding-top: 6px;
-    background: #ffffff; font-size: 12px; font-weight: 700; color: #64748b;
+    border-radius: 14px; margin-top: 8px; padding-top: 8px;
+    background: #ffffff; font-size: 12px; font-weight: 800; color: #64748b;
 }
 QGroupBox#settings_group::title {
     subcontrol-origin: margin; subcontrol-position: top left;
-    left: 14px; padding: 0 6px; color: #64748b;
+    left: 14px; padding: 0 6px; color: #b45309;
 }
 
 QProgressBar#analysis_progress {
@@ -5490,17 +5573,30 @@ QProgressBar#analysis_progress {
 }
 QProgressBar#analysis_progress::chunk {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #2563eb, stop:1 #7c3aed);
+        stop:0 #f59e0b, stop:1 #8b5cf6);
     border-radius: 3px;
 }
 
 QFrame[frameShape="4"] { color: #e2e8f0; }
             """)
 
+        def _populate_currency_combo(self):
+            """Feltölti a megjelenítési-valuta combót: Auto(HUF), USD, majd az
+            EXTRA_DISPLAY_CURRENCIES. A valuta kódját itemData-ban tároljuk."""
+            self.currency_combo.clear()
+            self.currency_combo.addItem(self.tr_("currency_auto"), "AUTO")
+            self.currency_combo.addItem(self.tr_("currency_usd"), "USD")
+            for code, sym in EXTRA_DISPLAY_CURRENCIES:
+                self.currency_combo.addItem(f"{code} ({sym})", code)
+
         def resolve_rate_currency(self):
-            if self.currency_combo.currentIndex() == 1:
+            idx = self.currency_combo.currentIndex()
+            code = self.currency_combo.itemData(idx)
+            if code in (None, "AUTO"):
+                return get_effective_rate()  # HUF-auto (hibánál USD-re esik vissza)
+            if code == "USD":
                 return 1.0, "USD", "Kézi USD megjelenítés"
-            return get_effective_rate()
+            return get_effective_rate(code)
 
         def on_display_currency_changed(self, _index=None):
             self.refresh_price_chart()
