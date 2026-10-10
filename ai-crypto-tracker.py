@@ -1,3 +1,15 @@
+__lazy_modules__ = [
+    "shutil",
+    "subprocess",
+    "csv",
+    "html",
+    "json",
+    "sqlite3",
+    "xml.etree.ElementTree",
+    "requests",
+    "numpy",
+]
+
 import sys
 import os
 import argparse
@@ -8,15 +20,12 @@ import csv
 import html
 import json
 import sqlite3
-import colorsys
 import math
-import random
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 import requests
 import numpy as np
-
 
 def configure_cross_platform_stdio():
     """
@@ -85,8 +94,6 @@ try:
     QT_AVAILABLE = True
     QT_IMPORT_ERROR = None
 
-    # ── Animated widgets ─────────────────────────────────────────────────────
-
     class AnimatedButton(QPushButton):
         """QPushButton with hover-glow + press-bounce via shadow animation."""
         def __init__(self, *args, **kwargs):
@@ -124,146 +131,6 @@ try:
         def mouseReleaseEvent(self, e):
             self._glow_to(20)
             super().mouseReleaseEvent(e)
-
-
-    class RGBTitleLabel(QLabel):
-        """QLabel whose text is painted with a live-shifting rainbow gradient."""
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._stops = [
-                (0.0, QColor(88, 166, 255)),
-                (0.5, QColor(63, 185, 80)),
-                (1.0, QColor(88, 166, 255)),
-            ]
-            self.setMinimumHeight(30)
-            from PySide6.QtGui import QFont as _QFont
-            f = _QFont("Segoe UI", 13)
-            f.setBold(True)
-            self.setFont(f)
-
-        def set_stops(self, stops):
-            self._stops = stops
-            self.update()
-
-        def paintEvent(self, _event):
-            p = QPainter(self)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            grad = QLinearGradient(0, 0, max(self.width(), 1), 0)
-            for pos, col in self._stops:
-                grad.setColorAt(pos, col)
-            p.setPen(QPen(QBrush(grad), 0))
-            p.setFont(self.font())
-            p.drawText(
-                self.rect(),
-                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                self.text(),
-            )
-            p.end()
-
-
-    class RGBBorderBar(QFrame):
-        """A thin horizontal bar that shows a shifting RGB gradient – top accent."""
-        def __init__(self, h=4, parent=None):
-            super().__init__(parent)
-            self.setFixedHeight(h)
-            self._stops = [
-                (0.0, QColor(88, 166, 255)),
-                (0.5, QColor(63, 185, 80)),
-                (1.0, QColor(88, 166, 255)),
-            ]
-
-        def set_stops(self, stops):
-            self._stops = stops
-            self.update()
-
-        def paintEvent(self, event):
-            p = QPainter(self)
-            grad = QLinearGradient(0, 0, self.width(), 0)
-            for pos, col in self._stops:
-                grad.setColorAt(pos, col)
-            p.fillRect(self.rect(), QBrush(grad))
-            p.end()
-
-    # ── ParticleOverlay ──────────────────────────────────────────────────────
-
-    class ParticleOverlay(QWidget):
-        """Transparent floating-particle constellation layer behind the main UI."""
-
-        N = 30
-        LINK = 120
-
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-            self._dark = True
-            self._pts = []
-            self._timer = QTimer(self)
-            self._timer.timeout.connect(self._tick)
-            self._timer.start(40)
-            self._init_pts()
-
-        def _init_pts(self):
-            w = max(self.width(), 900)
-            h = max(self.height(), 600)
-            self._pts = [
-                {
-                    "x": random.random() * w,
-                    "y": random.random() * h,
-                    "vx": (random.random() - 0.5) * 0.45,
-                    "vy": (random.random() - 0.5) * 0.45,
-                    "r": 1.3 + random.random() * 1.7,
-                }
-                for _ in range(self.N)
-            ]
-
-        def set_dark(self, dark: bool):
-            self._dark = dark
-
-        def resizeEvent(self, e):
-            super().resizeEvent(e)
-            self._init_pts()
-
-        def _tick(self):
-            w, h = self.width(), self.height()
-            if w < 1 or h < 1:
-                return
-            for p in self._pts:
-                p["x"] = (p["x"] + p["vx"]) % w
-                p["y"] = (p["y"] + p["vy"]) % h
-            self.update()
-
-        def paintEvent(self, _event):
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            pts = self._pts
-            if self._dark:
-                dr, dg, db = 88, 166, 255
-            else:
-                dr, dg, db = 37, 99, 235
-
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(dr, dg, db, 70))
-            for p in pts:
-                r = int(p["r"])
-                painter.drawEllipse(QPoint(int(p["x"]), int(p["y"])), r, r)
-
-            for i in range(len(pts)):
-                for j in range(i + 1, len(pts)):
-                    dx = pts[i]["x"] - pts[j]["x"]
-                    dy = pts[i]["y"] - pts[j]["y"]
-                    d = math.sqrt(dx * dx + dy * dy)
-                    if d < self.LINK:
-                        alpha = int(38 * (1 - d / self.LINK))
-                        painter.setPen(QPen(QColor(dr, dg, db, alpha), 0.8))
-                        painter.drawLine(
-                            int(pts[i]["x"]), int(pts[i]["y"]),
-                            int(pts[j]["x"]), int(pts[j]["y"]),
-                        )
-            painter.end()
-
-    # ── PulsingDot ───────────────────────────────────────────────────────────
 
     class PulsingDot(QWidget):
         """Animated pulsing status indicator dot."""
@@ -310,8 +177,6 @@ try:
             p.drawEllipse(QPoint(cx, cy), 4, 4)
             p.end()
 
-    # ── ShimmerBar ───────────────────────────────────────────────────────────
-
     class ShimmerBar(QWidget):
         """Animated gradient shimmer loading bar."""
 
@@ -339,17 +204,14 @@ try:
         def paintEvent(self, _event):
             p = QPainter(self)
             w = self.width()
-            p.fillRect(self.rect(), QColor(30, 41, 59))
             grad = QLinearGradient(0, 0, w, 0)
             pos = self._pos
             w2 = 0.30
-            grad.setColorAt(max(0.0, pos - w2), QColor(30, 41, 59, 0))
-            grad.setColorAt(pos,                  QColor(99, 102, 241, 230))
-            grad.setColorAt(min(1.0, pos + w2), QColor(30, 41, 59, 0))
+            grad.setColorAt(max(0.0, pos - w2), QColor(91, 108, 255, 0))
+            grad.setColorAt(pos,                  QColor(91, 108, 255, 230))
+            grad.setColorAt(min(1.0, pos + w2), QColor(91, 108, 255, 0))
             p.fillRect(self.rect(), QBrush(grad))
             p.end()
-
-    # ── NumberTickLabel ──────────────────────────────────────────────────────
 
     class NumberTickLabel(QLabel):
         """QLabel that animates smoothly from one numeric value to another."""
@@ -381,8 +243,6 @@ except Exception as e:
     QT_AVAILABLE = False
     QT_IMPORT_ERROR = e
 
-
-# ---- ESZKÖZÖK ----
 ASSETS = {
     "Bitcoin": "BTC-USD",
     "Ethereum": "ETH-USD",
@@ -413,7 +273,6 @@ ASSETS = {
     "Tesla": "TSLA",
     "AMD": "AMD",
     "Netflix": "NFLX",
-    # Magyar részvények (BÉT, Yahoo: .BD)
     "OTP Bank": "OTP.BD",
     "MOL": "MOL.BD",
     "Richter Gedeon": "RICHTER.BD",
@@ -424,7 +283,6 @@ ASSETS = {
     "Masterplast": "MASTERPLAST.BD",
     "AKKO Invest": "AKKO.BD",
     "Appeninn": "APPENINN.BD",
-    # További kriptók (Yahoo *-USD)
     "Stellar": "XLM-USD",
     "Cosmos": "ATOM-USD",
     "NEAR Protocol": "NEAR-USD",
@@ -437,7 +295,6 @@ ASSETS = {
     "Aptos": "APT-USD",
     "Arbitrum": "ARB-USD",
     "Optimism": "OP-USD",
-    # További ismert kriptók (Yahoo *-USD)
     "Bitcoin Cash": "BCH-USD",
     "Polygon": "MATIC-USD",
     "Toncoin": "TON11419-USD",
@@ -464,12 +321,10 @@ ASSETS = {
     "Gala": "GALA-USD",
     "Wrapped Bitcoin": "WBTC-USD",
     "Tether (USDT)": "USDT-USD",
-    # Memecoinok
     "Pepe": "PEPE-USD",
     "dogwifhat": "WIF-USD",
     "Bonk": "BONK-USD",
     "Floki": "FLOKI-USD",
-    # További részvények / blue chip
     "JPMorgan Chase": "JPM",
     "Visa": "V",
     "Coca-Cola": "KO",
@@ -479,7 +334,6 @@ ASSETS = {
     "Spotify": "SPOT",
     "Berkshire Hathaway": "BRK-B",
     "Intel": "INTC",
-    # További US blue chip részvények
     "Broadcom": "AVGO",
     "Eli Lilly": "LLY",
     "Johnson & Johnson": "JNJ",
@@ -503,7 +357,6 @@ ASSETS = {
     "Costco": "COST",
     "PepsiCo": "PEP",
     "Palantir": "PLTR",
-    # Globális részvények (USD-ben jegyzett ADR / NYSE)
     "ASML": "ASML",
     "Novo Nordisk": "NVO",
     "TSMC": "TSM",
@@ -511,8 +364,6 @@ ASSETS = {
     "Toyota": "TM",
     "Ferrari": "RACE",
     "Shell": "SHEL",
-    # Devizák (Forex, Yahoo XXXUSD=X – 1 egység az adott devizában USD-ben).
-    # HUF nézetben a USD/HUF árfolyammal felszorozva a XXX/HUF keresztárfolyamot adja.
     "Euró (EUR)": "EURUSD=X",
     "Brit font (GBP)": "GBPUSD=X",
     "Japán jen (JPY)": "JPYUSD=X",
@@ -581,8 +432,6 @@ ASSET_CATEGORIES = {
 }
 
 FX_URL = "https://api.exchangerate-api.com/v4/latest/USD"
-# Megjelenítési valuták a HUF-auto és a "Mindig USD" opción felül.
-# (Az exchangerate-api mind támogatja; kód → szimbólum a chip/label-hez.)
 EXTRA_DISPLAY_CURRENCIES = [
     ("EUR", "€"),
     ("GBP", "£"),
@@ -596,7 +445,6 @@ OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
-# NVIDIA NIM (build.nvidia.com) – OpenAI-kompatibilis chat completions végpont
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_MODEL_DEFAULT = "meta/llama-3.3-70b-instruct"
 REQUEST_TIMEOUT = 15
@@ -613,12 +461,12 @@ APP_CONFIG_PATH = APP_STATE_DIR / "app_config.json"
 HOLDINGS_PATH  = APP_STATE_DIR / "holdings.json"
 SESSION_STATE_PATH = APP_STATE_DIR / "session.json"
 
-_current_lang = "hu"  # module-level so format_result can use it
+_current_lang = "hu"
 
 TRANSLATIONS = {
     "hu": {
         "window_title": "AI Eszközelemző Pro",
-        "title_label": "🤖 AI + Indikátor Elemző Pro",
+        "title_label": "AI + Indikátor Elemző Pro",
         "search_placeholder": "Keresés eszköz névre…",
         "only_favorites": "Csak kedvencek",
         "fav_toggle": "Kedvenc ☆ váltás",
@@ -689,7 +537,6 @@ TRANSLATIONS = {
         "clear_alerts_btn": "Értesítési napló törlése",
         "portfolio_placeholder": "Portfolio összegzés itt jelenik meg...",
         "chart_ranges": ["1 nap (élő)", "5 nap", "1 hó", "3 hó"],
-        # format_result labels
         "fr_daily_change": "Napi változás",
         "fr_session_open": "Mai nyitás",
         "fr_prev_close": "Előző záró",
@@ -742,7 +589,7 @@ TRANSLATIONS = {
     },
     "en": {
         "window_title": "AI Asset Analyzer Pro",
-        "title_label": "🤖 AI + Indicator Analyzer Pro",
+        "title_label": "AI + Indicator Analyzer Pro",
         "search_placeholder": "Search by asset name…",
         "only_favorites": "Favorites only",
         "fav_toggle": "Favorite ☆ toggle",
@@ -865,7 +712,7 @@ TRANSLATIONS = {
     },
     "de": {
         "window_title": "KI-Asset-Analyzer Pro",
-        "title_label": "🤖 KI + Indikator-Analyzer Pro",
+        "title_label": "KI + Indikator-Analyzer Pro",
         "search_placeholder": "Asset-Name suchen…",
         "only_favorites": "Nur Favoriten",
         "fav_toggle": "Favorit ☆ umschalten",
@@ -988,7 +835,6 @@ TRANSLATIONS = {
     },
 }
 
-
 def _tr(key, lang=None, **kwargs):
     l = lang or _current_lang
     val = TRANSLATIONS.get(l, TRANSLATIONS["hu"]).get(key) or TRANSLATIONS["hu"].get(key, key)
@@ -999,19 +845,16 @@ def _tr(key, lang=None, **kwargs):
             return val
     return val
 
-
 def http_get(url, timeout=REQUEST_TIMEOUT, headers=None):
     try:
         return requests.get(url, timeout=timeout, headers=headers)
     except requests.RequestException as first_error:
-        # Ha env proxy akadályozza, próbáljuk direktben (trust_env=False).
         try:
             with requests.Session() as session:
                 session.trust_env = False
                 return session.get(url, timeout=timeout, headers=headers)
         except requests.RequestException:
             raise first_error
-
 
 def http_post(url, timeout=REQUEST_TIMEOUT, **kwargs):
     try:
@@ -1024,12 +867,7 @@ def http_post(url, timeout=REQUEST_TIMEOUT, **kwargs):
         except requests.RequestException:
             raise first_error
 
-
-# ---- USD → HUF ----
-# Legutóbb letöltött USD-alapú árfolyamok (USD→X). A BÉT (.BD, HUF-alapú)
-# instrumentumok tetszőleges megjelenítési valutára váltásához kell a HUF-kulcs.
 _LAST_FX_RATES = {}
-
 
 def get_rate(currency="HUF", timeout=REQUEST_TIMEOUT, strict=True):
     """1 USD = ? a kért megjelenítési valutában (USD→currency)."""
@@ -1046,7 +884,6 @@ def get_rate(currency="HUF", timeout=REQUEST_TIMEOUT, strict=True):
     except (requests.RequestException, KeyError, ValueError, TypeError) as e:
         errors.append(f"exchangerate-api: {e}")
 
-    # Fallback: Yahoo FX árfolyam (csak a HUF-ra van dedikált tartalék forrás)
     if cur == "HUF":
         try:
             yahoo_fx = "https://query1.finance.yahoo.com/v8/finance/chart/USDHUF=X?range=1d&interval=5m"
@@ -1070,14 +907,12 @@ def get_rate(currency="HUF", timeout=REQUEST_TIMEOUT, strict=True):
         raise error
     return 1.0
 
-
 def get_effective_rate(currency="HUF"):
     cur = (currency or "HUF").strip().upper()
     try:
         return get_rate(cur, strict=True), cur, None
     except Exception as e:
         return 1.0, "USD", str(e)
-
 
 def yahoo_price_display_multiplier(symbol, rate, display_currency):
     """
@@ -1092,10 +927,7 @@ def yahoo_price_display_multiplier(symbol, rate, display_currency):
     sym = str(symbol or "").strip().upper()
     is_bet = sym.endswith(".BD")
     if not is_bet:
-        # USD-alapú instrumentum (kripto, US/world részvény, forex): USD→cur szorzó.
-        # USD megjelenítésnél r==1.0, HUF-nál r==USD/HUF — visszaadja a régi viselkedést.
         return r
-    # BÉT (.BD) instrumentum HUF-ban jegyezve → HUF-ból váltunk a megjelenítési valutára.
     if cur == "HUF":
         return 1.0
     huf = _LAST_FX_RATES.get("HUF")
@@ -1104,11 +936,8 @@ def yahoo_price_display_multiplier(symbol, rate, display_currency):
     except (TypeError, ValueError):
         huf = None
     if not huf or huf <= 0:
-        # Nincs gyorsítótárazott HUF-árfolyam: USD esetén a régi 1/r tartalék.
         return 1.0 / r if cur == "USD" else 1.0
-    # HUF→cur = (USD→cur) / (USD→HUF)
     return r / huf
-
 
 def get_usdhuf_vs_ma20(timeout=REQUEST_TIMEOUT):
     """
@@ -1141,8 +970,6 @@ def get_usdhuf_vs_ma20(timeout=REQUEST_TIMEOUT):
     except (requests.RequestException, KeyError, ValueError, TypeError):
         return None
 
-
-# ---- ADAT ----
 def get_asset(symbol, timeout=REQUEST_TIMEOUT):
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -1179,7 +1006,6 @@ def get_asset(symbol, timeout=REQUEST_TIMEOUT):
     if meta.get("regularMarketOpen") is None:
         native_open_fallback = infer_session_open_native_from_chart(result)
     return prices, meta, native_open_fallback, volumes
-
 
 def fetch_chart_series(symbol, range_param="1d", interval_param="5m", timeout=REQUEST_TIMEOUT):
     """
@@ -1218,7 +1044,6 @@ def fetch_chart_series(symbol, range_param="1d", interval_param="5m", timeout=RE
         "meta": meta,
         "native_open_fallback": native_open_fb,
     }
-
 
 def fetch_ohlc_series(symbol, range_param="1d", interval_param="5m", timeout=REQUEST_TIMEOUT):
     """
@@ -1262,7 +1087,6 @@ def fetch_ohlc_series(symbol, range_param="1d", interval_param="5m", timeout=REQ
         "native_open_fallback": native_open_fb,
     }
 
-
 def regular_market_change_pct(meta):
     """Százalékos változás a meta mezők alapján (ha elérhető)."""
     if not meta:
@@ -1279,10 +1103,8 @@ def regular_market_change_pct(meta):
     except (TypeError, ValueError):
         return None
 
-
 def _utc_date_from_ts(tsec):
     return datetime.fromtimestamp(int(tsec), tz=timezone.utc).date()
-
 
 def infer_session_open_native_from_chart(chart_result):
     """
@@ -1317,7 +1139,6 @@ def infer_session_open_native_from_chart(chart_result):
     except (TypeError, ValueError):
         return None
 
-
 def meta_session_open_previous_close(meta, multiplier, native_open_fallback=None):
     """
     Részvény / instrumentum session nyitás és előző záró (Yahoo meta), megjelenítési devizában.
@@ -1339,11 +1160,8 @@ def meta_session_open_previous_close(meta, multiplier, native_open_fallback=None
     except (TypeError, ValueError):
         return None, None
 
-
-# ---- ÁLLAPOT (kedvencek, riasztások, SQLite) ----
 def ensure_app_state_dir():
     APP_STATE_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def load_favorites():
     ensure_app_state_dir()
@@ -1357,11 +1175,9 @@ def load_favorites():
         pass
     return []
 
-
 def save_favorites(names):
     ensure_app_state_dir()
     FAVORITES_PATH.write_text(json.dumps(sorted(set(names)), ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def load_custom_alert_rules():
     ensure_app_state_dir()
@@ -1375,11 +1191,9 @@ def load_custom_alert_rules():
         pass
     return []
 
-
 def save_custom_alert_rules(rules):
     ensure_app_state_dir()
     CUSTOM_ALERTS_PATH.write_text(json.dumps(rules, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def load_telegram_config():
     ensure_app_state_dir()
@@ -1393,14 +1207,12 @@ def load_telegram_config():
         pass
     return "", ""
 
-
 def save_telegram_config(token, chat_id):
     ensure_app_state_dir()
     TELEGRAM_CONFIG_PATH.write_text(
         json.dumps({"token": token, "chat_id": chat_id}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
 
 def load_discord_config():
     ensure_app_state_dir()
@@ -1414,14 +1226,12 @@ def load_discord_config():
         pass
     return ""
 
-
 def save_discord_config(webhook_url):
     ensure_app_state_dir()
     DISCORD_CONFIG_PATH.write_text(
         json.dumps({"webhook_url": webhook_url}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
 
 def load_app_config():
     ensure_app_state_dir()
@@ -1441,14 +1251,12 @@ def load_app_config():
         pass
     return "hu", "dark"
 
-
 def save_app_config(lang, theme):
     ensure_app_state_dir()
     APP_CONFIG_PATH.write_text(
         json.dumps({"lang": lang, "theme": theme}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
 
 def load_session_state():
     ensure_app_state_dir()
@@ -1462,11 +1270,9 @@ def load_session_state():
         pass
     return {}
 
-
 def save_session_state(data: dict):
     ensure_app_state_dir()
     SESSION_STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def load_holdings():
     ensure_app_state_dir()
@@ -1480,7 +1286,6 @@ def load_holdings():
         pass
     return {}
 
-
 def save_holdings(holdings):
     ensure_app_state_dir()
     HOLDINGS_PATH.write_text(
@@ -1488,7 +1293,6 @@ def save_holdings(holdings):
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-
 
 def db_conn():
     ensure_app_state_dir()
@@ -1506,7 +1310,6 @@ def db_conn():
     conn.commit()
     return conn
 
-
 def db_insert_rows(rows):
     if not rows:
         return
@@ -1521,7 +1324,6 @@ def db_insert_rows(rows):
         conn.commit()
     finally:
         conn.close()
-
 
 def db_search_history(asset_needle="", limit=500):
     conn = db_conn()
@@ -1542,8 +1344,6 @@ def db_search_history(asset_needle="", limit=500):
     finally:
         conn.close()
 
-
-# ---- TOVÁBBI INDIKÁTOROK / KOCKÁZAT ----
 def ema_np(x, span):
     if x.size == 0:
         return x
@@ -1553,7 +1353,6 @@ def ema_np(x, span):
     for i in range(1, x.size):
         y[i] = alpha * x[i] + (1.0 - alpha) * y[i - 1]
     return y
-
 
 def macd_bundle(prices):
     if prices.size < 40:
@@ -1565,7 +1364,6 @@ def macd_bundle(prices):
     hist = line - signal
     return float(line[-1]), float(signal[-1]), float(hist[-1])
 
-
 def bollinger_last(prices, window=20, n_std=2.0):
     if prices.size < window:
         return None, None, None
@@ -1574,7 +1372,6 @@ def bollinger_last(prices, window=20, n_std=2.0):
     sd = float(np.std(w))
     return mid + n_std * sd, mid - n_std * sd, mid
 
-
 def max_drawdown_pct_series(prices):
     if prices.size < 2:
         return None
@@ -1582,14 +1379,11 @@ def max_drawdown_pct_series(prices):
     dd = np.where(peak > 0, (peak - prices) / peak, 0.0)
     return float(np.max(dd) * 100.0)
 
-
 def realized_vol_annual_pct(prices):
     if prices.size < 16:
         return None
     lr = np.diff(np.log(prices))
-    # Órás sávok: évesítés ~ sqrt(252 * 24)
     return float(np.std(lr) * np.sqrt(252.0 * 24.0) * 100.0)
-
 
 def volume_stats(volumes):
     if volumes is None or volumes.size == 0:
@@ -1602,7 +1396,6 @@ def volume_stats(volumes):
     sma_v = float(np.mean(clean[-w:]))
     ratio = (last_v / sma_v) if sma_v > 0 else None
     return last_v, sma_v, ratio
-
 
 def build_extended_metrics(prices, volumes):
     m, s, h = macd_bundle(prices)
@@ -1622,7 +1415,6 @@ def build_extended_metrics(prices, volumes):
         "realized_vol_annual_pct": realized_vol_annual_pct(prices),
     }
 
-
 def rolling_bollinger(closes, window=20, n_std=2.0):
     """Gördülő Bollinger-sávok. Visszaad: (upper, mid, lower) np.array-ek,
     NaN-nal ahol még nincs elég adat — diagram overlay-hez."""
@@ -1641,7 +1433,6 @@ def rolling_bollinger(closes, window=20, n_std=2.0):
         upper[i] = mu + n_std * sd
         lower[i] = mu - n_std * sd
     return upper, mid, lower
-
 
 def rolling_rsi(closes, period=14):
     """Wilder-simítású RSI idősor (NaN ahol még nincs elég adat)."""
@@ -1669,7 +1460,6 @@ def rolling_rsi(closes, period=14):
         out[i + 1] = _rsi(avg_gain, avg_loss)
     return out
 
-
 def rolling_macd(closes):
     """MACD vonal / jelvonal / histogram teljes idősora."""
     arr = np.asarray(closes, dtype=float)
@@ -1683,7 +1473,6 @@ def rolling_macd(closes):
     signal = ema_np(line, 9)
     hist = line - signal
     return line, signal, hist
-
 
 def correlation_matrix_log_returns(asset_items, rate, display_currency, timeout=REQUEST_TIMEOUT):
     series = []
@@ -1716,7 +1505,6 @@ def correlation_matrix_log_returns(asset_items, rate, display_currency, timeout=
             mat[i, j] = mat[j, i] = c
     return mat, names
 
-
 def fetch_yahoo_headlines(symbol, limit=8, timeout=REQUEST_TIMEOUT):
     from urllib.parse import quote
 
@@ -1738,7 +1526,6 @@ def fetch_yahoo_headlines(symbol, limit=8, timeout=REQUEST_TIMEOUT):
     except (requests.RequestException, ET.ParseError, ValueError):
         return []
 
-
 def format_correlation_table(mat, names):
     if mat is None or not names or mat.shape[0] != len(names):
         return "Nincs eleg adat a korrelaciohoz (legalabb 2 eszkoz, sikeres letoltes)."
@@ -1751,7 +1538,6 @@ def format_correlation_table(mat, names):
             row += f"{mat[i, j]:12.2f}"
         lines.append(row)
     return "\n".join(lines)
-
 
 def build_html_report(results, currency, title="AI Eszkoz riport"):
     esc = html.escape
@@ -1782,7 +1568,6 @@ def build_html_report(results, currency, title="AI Eszkoz riport"):
     parts.append("</body></html>")
     return "".join(parts)
 
-
 def custom_rule_matches(rule, result):
     target = str(rule.get("asset", "*")).strip()
     if target != "*" and target != result.get("name"):
@@ -1804,7 +1589,6 @@ def custom_rule_matches(rule, result):
         return rsi <= val
     return False
 
-
 def fire_custom_rules_if_needed(rules, result, cooldown_until, cooldown_sec=180):
     """cooldown_until: dict rule_key -> epoch when ok to fire again"""
     import time
@@ -1825,8 +1609,6 @@ def fire_custom_rules_if_needed(rules, result, cooldown_until, cooldown_sec=180)
         )
     return msgs
 
-
-# ---- RSI (Wilder simítás) ----
 def calculate_rsi(prices, period=14):
     if prices.size < period + 1:
         return 50.0
@@ -1847,14 +1629,10 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-
-# ---- MOZGÓÁTLAG ----
 def moving_average(prices, window=20):
     w = min(window, prices.size)
     return float(np.mean(prices[-w:]))
 
-
-# ---- AI ----
 def build_features_and_labels(prices, volumes=None):
     """
     Features on each hour:
@@ -1873,7 +1651,7 @@ def build_features_and_labels(prices, volumes=None):
 
     X, y = [], []
     returns = np.diff(prices) / prices[:-1]
-    lookback = 48  # longer lookback for more context
+    lookback = 48
 
     for i in range(lookback, prices.size - 1):
         ret_1 = returns[i - 1]
@@ -1942,7 +1720,6 @@ def build_features_and_labels(prices, volumes=None):
 
     return np.array(X, dtype=float), np.array(y, dtype=int)
 
-
 def random_forest_up_probability(model, feature_row):
     """
     P(következő óra fel) = osztály 1 valószínűsége.
@@ -1960,7 +1737,6 @@ def random_forest_up_probability(model, feature_row):
         return float(proba[int(idx[0])])
     return float(1.0 - proba[0])
 
-
 FEATURE_NAMES = [
     "ret_1h", "ret_3h", "ret_12h", "ret_24h", "ret_48h",
     "vol_12h", "vol_24h",
@@ -1971,7 +1747,6 @@ FEATURE_NAMES = [
     "momentum",
     "volume_ratio",
 ]
-
 
 def predict(prices, volumes=None):
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -2041,8 +1816,6 @@ def predict(prices, volumes=None):
 
     return current, future, next_up_prob, accuracy, feat_imp
 
-
-# ---- KOMBINÁLT DÖNTÉS ----
 def smart_decision(prices, volumes=None):
     current, future, next_up_prob, accuracy, feat_imp = predict(prices, volumes=volumes)
 
@@ -2055,13 +1828,11 @@ def smart_decision(prices, volumes=None):
     weighted_buy = 0.0
     weighted_sell = 0.0
 
-    # AI ensemble signal (weight 2.0)
     if next_up_prob > 0.55:
         weighted_buy += 2.0 * (next_up_prob - 0.5) * 2
     elif next_up_prob < 0.45:
         weighted_sell += 2.0 * (0.5 - next_up_prob) * 2
 
-    # RSI signal (weight 1.5)
     if rsi > 75:
         weighted_sell += 1.5
     elif rsi > 70:
@@ -2071,20 +1842,17 @@ def smart_decision(prices, volumes=None):
     elif rsi < 30:
         weighted_buy += 1.0
 
-    # MA signal (weight 1.0)
     if current > ma:
         weighted_buy += 1.0
     else:
         weighted_sell += 1.0
 
-    # MACD signal (weight 1.5)
     if macd_hist is not None:
         if macd_hist > 0 and macd_line > macd_signal:
             weighted_buy += 1.5
         elif macd_hist < 0 and macd_line < macd_signal:
             weighted_sell += 1.5
 
-    # Bollinger Band signal (weight 1.0)
     if bb_upper is not None and bb_lower is not None and bb_upper > bb_lower:
         if current > bb_upper:
             weighted_sell += 1.0
@@ -2100,12 +1868,10 @@ def smart_decision(prices, volumes=None):
 
     return decision, current, future, rsi, ma, next_up_prob, accuracy, feat_imp, weighted_buy, weighted_sell
 
-
 def build_recommendation(current, future, next_up_prob, accuracy, rsi, ma):
     edge = next_up_prob - 0.5
     confidence = max(0.0, min(1.0, (abs(edge) * 2.0) * (0.6 + 0.4 * accuracy)))
 
-    # Volatilitás alapú kockázati távolság (minimum 1.5%)
     base_risk = max(0.015, abs((future / current) - 1.0))
     stop_distance = base_risk * 0.8
     tp_distance = base_risk * 1.6
@@ -2144,7 +1910,6 @@ def build_recommendation(current, future, next_up_prob, accuracy, rsi, ma):
         "take_profit": take_profit,
         "reasons": reasons,
     }
-
 
 def evaluate_today_investment(amount, currency, has_real_huf_rate, fx_ctx, result):
     """
@@ -2221,7 +1986,6 @@ def evaluate_today_investment(amount, currency, has_real_huf_rate, fx_ctx, resul
         "fx_note": fx_note,
     }
 
-
 def analyze_asset(name, symbol, rate, display_currency="HUF"):
     mult = yahoo_price_display_multiplier(symbol, rate, display_currency)
     prices_raw, meta, open_fallback_native, volumes_raw = get_asset(symbol)
@@ -2266,15 +2030,12 @@ def analyze_asset(name, symbol, rate, display_currency="HUF"):
         "sig_sell": sig_sell,
     }
 
-
 def get_current_price(symbol, rate, display_currency="HUF"):
     prices, _, _, _ = get_asset(symbol)
     mult = yahoo_price_display_multiplier(symbol, rate, display_currency)
     return float(prices[-1] * mult)
 
-
 def notify_price_change(title, message):
-    # Linux desktop notification via notify-send (if available)
     if sys.platform.startswith("linux") and shutil.which("notify-send"):
         try:
             subprocess.run(
@@ -2288,9 +2049,7 @@ def notify_price_change(title, message):
             pass
     print(f"[ÉRTESÍTÉS] {title} - {message}")
 
-
 def send_telegram_message(bot_token, chat_id, message, timeout=REQUEST_TIMEOUT, parse_mode="HTML"):
-    # Toleráljuk a beillesztési hibákat: whitespace és felesleges "bot" előtag.
     token = (bot_token or "").strip()
     if token.lower().startswith("bot"):
         token = token[3:]
@@ -2311,7 +2070,6 @@ def send_telegram_message(bot_token, chat_id, message, timeout=REQUEST_TIMEOUT, 
 
     try:
         r, data = _send(parse_mode)
-        # Ha a HTML formázás miatt 400-at kapunk, próbáljuk sima szövegként.
         if r.status_code == 400 and parse_mode:
             r2, data2 = _send(None)
             if data2.get("ok"):
@@ -2329,7 +2087,6 @@ def send_telegram_message(bot_token, chat_id, message, timeout=REQUEST_TIMEOUT, 
     except (requests.RequestException, ValueError, TypeError) as e:
         return False, str(e)
 
-
 def _fmt_price(value):
     """Format a price with appropriate decimal places regardless of magnitude."""
     v = float(value)
@@ -2346,11 +2103,9 @@ def _fmt_price(value):
         return f"{v:.6f}"
     return f"{v:.8f}"
 
-
 def format_telegram_result(result, currency="HUF"):
     """Format a single asset result as a rich Telegram HTML message."""
     decision = str(result.get("decision", ""))
-    # Match buy/sell signals across all supported languages (HU/EN/DE)
     _dec_up = decision.upper()
     if any(kw in _dec_up for kw in ("VÉTEL", "VETEL", "BUY", "KAUF")):
         signal_emoji = "📈"
@@ -2395,7 +2150,6 @@ def format_telegram_result(result, currency="HUF"):
         )
     return "\n".join(lines)
 
-
 def format_telegram_alert(message, asset_name=""):
     """Format a price alert as Telegram HTML."""
     if asset_name:
@@ -2404,15 +2158,11 @@ def format_telegram_alert(message, asset_name=""):
         header = "⚠️ <b>Árfolyam riasztás</b>\n"
     return header + html.escape(message)
 
-
-# ---- Discord (webhook) ----
 DISCORD_USERNAME = "AI Eszközelemző Pro"
-# Embed színek (decimális RGB)
 DISCORD_COLOR_BUY = 0x23E87A
 DISCORD_COLOR_SELL = 0xFF5D73
 DISCORD_COLOR_WAIT = 0xFFCB45
-DISCORD_COLOR_INFO = 0x5865F2  # Discord "blurple"
-
+DISCORD_COLOR_INFO = 0x5865F2
 
 def _discord_signal_meta(decision):
     """Map a decision string (HU/EN/DE) to (emoji, embed color)."""
@@ -2422,7 +2172,6 @@ def _discord_signal_meta(decision):
     if any(kw in dec_up for kw in ("ELADÁS", "ELADAS", "SELL", "VERKAUF")) or "⚠️" in dec_up:
         return "📉", DISCORD_COLOR_SELL
     return "⏳", DISCORD_COLOR_WAIT
-
 
 def send_discord_message(webhook_url, content=None, embeds=None, timeout=REQUEST_TIMEOUT):
     """Send a message to a Discord channel via incoming webhook.
@@ -2439,7 +2188,7 @@ def send_discord_message(webhook_url, content=None, embeds=None, timeout=REQUEST
     if content:
         payload["content"] = content[:2000]
     if embeds:
-        payload["embeds"] = embeds[:10]  # Discord max. 10 embed / üzenet
+        payload["embeds"] = embeds[:10]
     if "content" not in payload and "embeds" not in payload:
         return False, "Üres Discord üzenet"
 
@@ -2460,7 +2209,6 @@ def send_discord_message(webhook_url, content=None, embeds=None, timeout=REQUEST
         return False, f"HTTP {r.status_code}: {(r.text or '')[:200]}"
     except (requests.RequestException, ValueError, TypeError) as e:
         return False, str(e)
-
 
 def format_discord_result_embed(result, currency="HUF"):
     """Format a single asset result as a rich Discord embed dict."""
@@ -2508,7 +2256,6 @@ def format_discord_result_embed(result, currency="HUF"):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-
 def format_discord_alert_embed(message, asset_name=""):
     """Format a price alert as a Discord embed dict."""
     title = f"⚠️ Riasztás – {asset_name}" if asset_name else "⚠️ Árfolyam riasztás"
@@ -2519,7 +2266,6 @@ def format_discord_alert_embed(message, asset_name=""):
         "footer": {"text": "AI Eszközelemző Pro"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
 
 def append_live_csv(csv_path, rows):
     if not rows:
@@ -2548,7 +2294,6 @@ def append_live_csv(csv_path, rows):
         if not file_exists:
             writer.writeheader()
         writer.writerows(rows)
-
 
 def _build_ai_prompt(result, currency):
     """Build a rich market analysis prompt from an asset result dict."""
@@ -2602,7 +2347,6 @@ def _build_ai_prompt(result, currency):
         lines.append(f"Take-profit: {rec.get('take_profit', 0):.2f} {currency}")
     return "\n".join(lines)
 
-
 def get_claude_commentary(result, currency, api_key, model=ANTHROPIC_MODEL_DEFAULT, timeout=25):
     """Get AI commentary using the Anthropic Claude API."""
     if not api_key:
@@ -2643,7 +2387,6 @@ def get_claude_commentary(result, currency, api_key, model=ANTHROPIC_MODEL_DEFAU
     except (requests.RequestException, ValueError, TypeError) as e:
         return None, str(e)
 
-
 def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, timeout=20,
                       claude_api_key=None, claude_model=ANTHROPIC_MODEL_DEFAULT):
     """Get AI commentary; tries Claude first if claude_api_key is provided, then OpenAI."""
@@ -2651,7 +2394,6 @@ def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, tim
         text, err = get_claude_commentary(result, currency, claude_api_key, model=claude_model, timeout=timeout)
         if text:
             return text, None
-        # fallback to OpenAI if Claude fails
         if not api_key:
             return None, f"Claude hiba: {err}"
 
@@ -2687,7 +2429,6 @@ def get_ai_commentary(result, currency, api_key, model=OPENAI_MODEL_DEFAULT, tim
     except (requests.RequestException, ValueError, TypeError) as e:
         return None, str(e)
 
-
 def get_nvidia_commentary(result, currency, api_key, model=NVIDIA_MODEL_DEFAULT, timeout=20):
     """AI kommentár az NVIDIA NIM (build.nvidia.com) OpenAI-kompatibilis API-jával."""
     if not api_key:
@@ -2722,7 +2463,6 @@ def get_nvidia_commentary(result, currency, api_key, model=NVIDIA_MODEL_DEFAULT,
     except (requests.RequestException, ValueError, TypeError) as e:
         return None, str(e)
 
-
 def get_claude_cli_commentary(result, currency, model=None, timeout=90):
     """AI kommentár a helyi 'claude' CLI-n (Claude Code) keresztül, headless módban.
     Az előfizetéses (OAuth) bejelentkezést használja — nem kell API-kulcs/kredit."""
@@ -2739,7 +2479,7 @@ def get_claude_cli_commentary(result, currency, model=None, timeout=90):
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(Path.home()),  # semleges könyvtár, ne húzzon be projekt-kontextust
+            cwd=str(Path.home()),
         )
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "ismeretlen hiba").strip()
@@ -2752,7 +2492,6 @@ def get_claude_cli_commentary(result, currency, model=None, timeout=90):
         return None, f"Időtúllépés ({timeout}s) a claude CLI hívásakor."
     except Exception as e:
         return None, str(e)
-
 
 def monitor_price_changes(selected_assets, interval_sec=60, threshold_pct=1.0):
     print(
@@ -2812,8 +2551,6 @@ def monitor_price_changes(selected_assets, interval_sec=60, threshold_pct=1.0):
             print("\nÁrfigyelés leállítva.")
             return 1 if had_error else 0
 
-
-# ---- ALAKZATFELISMERÉS ----
 def find_local_extrema(closes, order=5):
     """
     Lokális maximumok és minimumok keresése a záróárak listájában.
@@ -2829,7 +2566,6 @@ def find_local_extrema(closes, order=5):
             maxima.append(i)
         if arr[i] == window.min() and arr[i] < window.mean():
             minima.append(i)
-    # Deduplikáció: egymáshoz túl közel eső pontok közül csak az erősebb marad
     def dedup(idxs, arr, is_max, min_gap):
         result = []
         for idx in idxs:
@@ -2847,7 +2583,6 @@ def find_local_extrema(closes, order=5):
     minima = dedup(minima, arr, False, min_gap)
     return maxima, minima
 
-
 def detect_patterns(candles, mult=1.0):
     """
     Alakzatfelismerés az utolsó N gyertyán.
@@ -2863,24 +2598,19 @@ def detect_patterns(candles, mult=1.0):
     n = len(closes)
     arr = np.array(closes, dtype=float)
 
-    # Adaptív order: hosszabb idősoron nagyobb ablak
     order = max(3, min(8, n // 20))
     maxima, minima = find_local_extrema(closes, order=order)
 
     patterns = []
 
-    # --- M alakzat (Double Top) ---
-    # Két közel azonos magasságú maximum, köztük völgy
     if len(maxima) >= 2:
         for i in range(len(maxima) - 1):
             m1, m2 = maxima[i], maxima[i + 1]
             if m2 - m1 < order * 2:
                 continue
             h1, h2 = arr[m1], arr[m2]
-            # A két csúcs legyen közel azonos (max 5% különbség)
             if abs(h1 - h2) / max(h1, h2) > 0.05:
                 continue
-            # Köztük legyen egy völgy legalább 1.0%-kal lejjebb
             valley = arr[m1:m2 + 1].min()
             avg_top = (h1 + h2) / 2
             if (avg_top - valley) / avg_top < 0.010:
@@ -2900,8 +2630,6 @@ def detect_patterns(candles, mult=1.0):
                 "color": "#ef4444",
             })
 
-    # --- W alakzat (Double Bottom) ---
-    # Két közel azonos mélységű minimum, köztük csúcs
     if len(minima) >= 2:
         for i in range(len(minima) - 1):
             b1, b2 = minima[i], minima[i + 1]
@@ -2929,8 +2657,6 @@ def detect_patterns(candles, mult=1.0):
                 "color": "#22c55e",
             })
 
-    # --- V alakzat (Sharp Reversal Up) ---
-    # Gyors esés, majd gyors visszapattanás az utolsó 20 gyertyán
     window = min(20, n)
     seg = arr[-window:]
     bot_i = int(np.argmin(seg))
@@ -2953,7 +2679,6 @@ def detect_patterns(candles, mult=1.0):
                 "color": "#22c55e",
             })
 
-    # --- Fordított V (Sharp Reversal Down) ---
     top_i = int(np.argmax(seg))
     if 2 <= top_i <= window - 3:
         left_rise = (seg[top_i] - seg[0]) / seg[0] if seg[0] > 0 else 0
@@ -2974,8 +2699,6 @@ def detect_patterns(candles, mult=1.0):
                 "color": "#ef4444",
             })
 
-    # --- Fej-váll (Head & Shoulders, medvés) ---
-    # Három maximum, ahol a középső (fej) magasabb, a két váll közel azonos.
     if len(maxima) >= 3:
         for i in range(len(maxima) - 2):
             a, b, c = maxima[i], maxima[i + 1], maxima[i + 2]
@@ -2998,7 +2721,6 @@ def detect_patterns(candles, mult=1.0):
                 })
                 break
 
-    # --- Fordított Fej-váll (Inverse H&S, bullish) ---
     if len(minima) >= 3:
         for i in range(len(minima) - 2):
             a, b, c = minima[i], minima[i + 1], minima[i + 2]
@@ -3021,21 +2743,20 @@ def detect_patterns(candles, mult=1.0):
                 })
                 break
 
-    # --- Háromszög formációk (a maximumok/minimumok meredeksége alapján) ---
     def _slope_pct(idxs):
         if len(idxs) < 2:
             return None
         xs = np.array(idxs, dtype=float)
         ys = arr[np.array(idxs)]
         base = float(np.mean(ys)) or 1.0
-        return float(np.polyfit(xs, ys, 1)[0]) / base * 100.0  # %/gyertya
+        return float(np.polyfit(xs, ys, 1)[0]) / base * 100.0
 
     recent_max = [m for m in maxima if m >= n * 0.4]
     recent_min = [m for m in minima if m >= n * 0.4]
     sl_max = _slope_pct(recent_max)
     sl_min = _slope_pct(recent_min)
     if sl_max is not None and sl_min is not None and len(recent_max) >= 2 and len(recent_min) >= 2:
-        flat = 0.05  # %/gyertya alatti meredekség "vízszintes"
+        flat = 0.05
         tri_start = min(recent_max[0], recent_min[0])
         if abs(sl_max) < flat and sl_min > flat:
             patterns.append({
@@ -3059,15 +2780,12 @@ def detect_patterns(candles, mult=1.0):
                 "direction": "neutral", "color": "#f59e0b",
             })
 
-    # Deduplikáció: ha ugyanolyan típusú alakzat van, csak az utolsót tartjuk
     seen = {}
     for p in reversed(patterns):
         if p["type"] not in seen:
             seen[p["type"]] = p
     return list(reversed(list(seen.values())))
 
-
-# ---- HOLDINGS ----
 def load_holdings():
     ensure_app_state_dir()
     if not HOLDINGS_PATH.is_file():
@@ -3080,7 +2798,6 @@ def load_holdings():
         pass
     return {}
 
-
 def save_holdings(holdings):
     ensure_app_state_dir()
     HOLDINGS_PATH.write_text(
@@ -3089,8 +2806,6 @@ def save_holdings(holdings):
         encoding="utf-8",
     )
 
-
-# ---- FEAR & GREED ----
 def fetch_fear_greed_index(timeout=8):
     """Fetch current Crypto Fear & Greed Index from alternative.me (free)."""
     try:
@@ -3101,8 +2816,6 @@ def fetch_fear_greed_index(timeout=8):
     except Exception:
         return None
 
-
-# ---- SUPPORT / RESISTANCE ----
 def find_support_resistance(prices, n=3):
     """Find key support and resistance price levels using histogram density."""
     if prices.size < 20:
@@ -3122,8 +2835,6 @@ def find_support_resistance(prices, n=3):
     resistance = sorted([l for l in levels if l > current * 0.995])[:n]
     return support, resistance
 
-
-# ---- MA CROSS ----
 def detect_ma_cross(prices):
     """Detect Golden/Death Cross (MA50 vs MA200, or MA20 vs MA50 if < 200 bars)."""
     if prices.size < 52:
@@ -3149,15 +2860,12 @@ def detect_ma_cross(prices):
             return {"type": "death_cross", "fast": ma50, "slow": ma20, "fast_n": 50, "slow_n": 20}
     return None
 
-
-# ---- RICH HTML RESULT ----
 def _sig_colors(decision, dark=True):
     if "📈" in decision:
         return "#22c55e", "#0f2d1f" if dark else "#f0fdf4", "#22c55e"
     if "⚠️" in decision:
         return "#ef4444", "#2d0f0f" if dark else "#fef2f2", "#ef4444"
     return "#f59e0b", "#2d220f" if dark else "#fffbeb", "#f59e0b"
-
 
 def format_result_html(result, currency="HUF", dark=True):
     """Részletes HTML kártya egy eszköz elemzéséhez — minden elérhető adattal."""
@@ -3210,7 +2918,6 @@ def format_result_html(result, currency="HUF", dark=True):
         return (f'<tr><td colspan="4" style="padding:3px 0;font-size:11px;color:{text}">'
                 f'<span style="color:{lc}">{html.escape(label)}:</span> {content_html}</td></tr>')
 
-    # ── header values ──
     dcp     = result.get("day_change_pct")
     dcp_str = (f"{'▲' if dcp >= 0 else '▼'} {dcp:+.2f}%" if dcp is not None else "")
     dcp_col = "#22c55e" if (dcp or 0) >= 0 else "#ef4444"
@@ -3235,7 +2942,6 @@ def format_result_html(result, currency="HUF", dark=True):
     rec_side = rec.get("side", "")
     neutral  = _tr("side_neutral")
 
-    # ── MA cross badge ──
     cross     = result.get("ma_cross") or {}
     cross_tag = ""
     if cross.get("type") == "golden_cross":
@@ -3243,7 +2949,6 @@ def format_result_html(result, currency="HUF", dark=True):
     elif cross.get("type") == "death_cross":
         cross_tag = '&nbsp;<span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">☠️ Death Cross</span>'
 
-    # ── árszintek szekció ──
     so = result.get("session_open")
     pc = result.get("previous_close")
     open_prev_html = ""
@@ -3251,7 +2956,6 @@ def format_result_html(result, currency="HUF", dark=True):
         open_prev_html = row(L("Mai nyitás", "Open", "Eröffnung"), fp(so),
                              L("Előző záró", "Prev close", "Vortagesschluss"), fp(pc))
 
-    # ── Bollinger ──
     bb_u, bb_m, bb_l = m.get("bb_upper"), m.get("bb_mid"), m.get("bb_lower")
     bb_html = ""
     if bb_u is not None:
@@ -3259,7 +2963,6 @@ def format_result_html(result, currency="HUF", dark=True):
                       L("BB alsó", "BB lower", "BB unten"), fp(bb_l), "#818cf8", "#818cf8")
         bb_html += row(L("BB közép", "BB mid", "BB Mitte"), fp(bb_m))
 
-    # ── forgalom ──
     vlast = m.get("volume_last")
     vratio = m.get("volume_vs_sma")
     vol_html = ""
@@ -3269,13 +2972,11 @@ def format_result_html(result, currency="HUF", dark=True):
         vol_html = row(L("Forgalom", "Volume", "Volumen"), fvol(vlast),
                        L("vs 20-átlag", "vs 20-avg", "vs 20-Schnitt"), vr_str, text, vr_col)
 
-    # ── MA kereszt szint ──
     cross_html = ""
     if cross.get("fast") is not None and cross.get("slow") is not None:
         cross_html = row(f"MA{cross.get('fast_n','')}", fp(cross.get("fast")),
                          f"MA{cross.get('slow_n','')}", fp(cross.get("slow")))
 
-    # ── jelzéspontszámok ──
     sb, ss = result.get("sig_buy"), result.get("sig_sell")
     sig_html = ""
     if sb is not None and ss is not None:
@@ -3283,7 +2984,6 @@ def format_result_html(result, currency="HUF", dark=True):
                        L("Eladási pont", "Sell score", "Verkaufspunkte"), f"{ss:.1f}",
                        "#22c55e", "#ef4444")
 
-    # ── top AI jellemzők ──
     feat = result.get("feat_imp") or []
     feat_html = ""
     if feat:
@@ -3294,14 +2994,12 @@ def format_result_html(result, currency="HUF", dark=True):
         )
         feat_html = fullrow(L("Top AI jellemzők", "Top AI features", "Top KI-Merkmale"), chips)
 
-    # ── indokok ──
     reasons = rec.get("reasons") or []
     reasons_html = ""
     if reasons:
         reasons_html = fullrow(L("Indok", "Reasons", "Begründung"),
                                " · ".join(html.escape(str(r)) for r in reasons))
 
-    # ── support / resistance ──
     supports   = result.get("support", [])
     resistance = result.get("resistance", [])
     sr_html = ""
@@ -3311,7 +3009,6 @@ def format_result_html(result, currency="HUF", dark=True):
         sr_html = (row(L("Támasz", "Support", "Stütze"), s_val, "", "", "#22c55e")
                    + row(L("Ellenállás", "Resistance", "Widerstand"), r_val, "", "", "#ef4444"))
 
-    # ── investment ──
     inv     = result.get("investment") or {}
     inv_html = ""
     if inv:
@@ -3326,7 +3023,6 @@ def format_result_html(result, currency="HUF", dark=True):
         if inv.get("fx_note"):
             inv_html += fullrow(L("Árfolyam", "FX", "FX"), html.escape(inv["fx_note"]))
 
-    # ── holdings ──
     qty = result.get("holding_qty") or 0
     hold_html = ""
     if qty > 0:
@@ -3336,7 +3032,6 @@ def format_result_html(result, currency="HUF", dark=True):
             f'<b style="color:#38bdf8">{qty:g} × {fp(result["current"])} = {fp(val)}</b>',
         )
 
-    # ── AI commentary ──
     ai_text = result.get("ai_commentary", "")
     ai_html = ""
     if ai_text:
@@ -3395,7 +3090,6 @@ def format_result_html(result, currency="HUF", dark=True):
     {ai_html}
   </table>
 </div>"""
-
 
 def format_result(result, currency="HUF"):
     t = _tr
@@ -3466,7 +3160,6 @@ def format_result(result, currency="HUF"):
         )
     return text
 
-
 if QT_AVAILABLE:
     from PySide6.QtWidgets import QSizePolicy
 
@@ -3491,16 +3184,16 @@ if QT_AVAILABLE:
             self._currency = "HUF"
             self._x_labels = []
             self._dark_mode = True
-            self._bb_bands = None      # (upper, mid, lower) np.array-ek vagy None
-            self._indicator = None     # {"type": "rsi"/"macd", ...} vagy None
+            self._bb_bands = None
+            self._indicator = None
             self.setMinimumHeight(360)
             self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            self.setStyleSheet("background: #0f172a; border-radius: 14px;")
+            self.setStyleSheet("background: #0b1018; border-radius: 10px;")
 
         def set_dark_mode(self, dark):
             self._dark_mode = dark
-            bg = "#0f172a" if dark else "#f4f7fc"
-            self.setStyleSheet(f"background: {bg}; border-radius: 14px;")
+            bg = "#0b1018" if dark else "#f7f8fb"
+            self.setStyleSheet(f"background: {bg}; border-radius: 10px;")
             self.update()
 
         def set_data(self, candles, patterns, title="", currency="HUF", x_labels=None,
@@ -3514,7 +3207,6 @@ if QT_AVAILABLE:
             self._indicator = indicator
             self.update()
 
-        # ---------- Paint ----------
         def paintEvent(self, event):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -3525,13 +3217,13 @@ if QT_AVAILABLE:
             w = self.width()
             h = self.height()
 
-            bg_col = QColor("#0d1117") if self._dark_mode else QColor("#f6f8fa")
-            fg_col = QColor("#8b949e") if self._dark_mode else QColor("#57606a")
-            grid_col = QColor("#21262d") if self._dark_mode else QColor("#d0d7de")
-            label_col = QColor("#484f58") if self._dark_mode else QColor("#8c959f")
-            title_col = QColor("#c9d1d9") if self._dark_mode else QColor("#24292f")
-            panel_bg = QColor("#0d1117") if self._dark_mode else QColor("#f6f8fa")
-            sep_col = QColor("#30363d") if self._dark_mode else QColor("#d0d7de")
+            bg_col = QColor("#0b1018") if self._dark_mode else QColor("#f7f8fb")
+            fg_col = QColor("#8b96ab") if self._dark_mode else QColor("#5b6577")
+            grid_col = QColor("#1a2335") if self._dark_mode else QColor("#e2e6ee")
+            label_col = QColor("#5d6880") if self._dark_mode else QColor("#8a93a5")
+            title_col = QColor("#e7ebf3") if self._dark_mode else QColor("#111827")
+            panel_bg = QColor("#0b1018") if self._dark_mode else QColor("#f7f8fb")
+            sep_col = QColor("#222d41") if self._dark_mode else QColor("#e2e6ee")
 
             painter.fillRect(0, 0, w, h, bg_col)
 
@@ -3557,12 +3249,10 @@ if QT_AVAILABLE:
             if plot_w < 10 or plot_h < 10:
                 return
 
-            # ---- price range ----
             highs  = [c[2] for c in candles]
             lows   = [c[3] for c in candles]
             y_max  = max(highs)
             y_min  = min(lows)
-            # A Bollinger-sávok kilóghatnak a gyertyák sávjából — vegyük bele a skálába.
             if self._bb_bands is not None:
                 up_b, _mid_b, lo_b = self._bb_bands
                 fin_up = up_b[~np.isnan(up_b)] if up_b is not None else np.array([])
@@ -3586,7 +3276,6 @@ if QT_AVAILABLE:
             candle_w = max(1.0, plot_w / n * 0.7)
             half_w   = candle_w / 2.0
 
-            # ---- grid lines ----
             grid_pen = QPen(grid_col)
             grid_pen.setWidthF(0.8)
             painter.setPen(grid_pen)
@@ -3595,7 +3284,6 @@ if QT_AVAILABLE:
                 price = y_min + y_span * i / n_grid
                 yy = to_y(price)
                 painter.drawLine(int(ml), int(yy), int(w - mr), int(yy))
-                # price label
                 painter.setPen(QPen(label_col))
                 if self._currency and max(abs(y_max), abs(y_min)) >= 500:
                     lbl = f"{price:,.0f}"
@@ -3610,7 +3298,6 @@ if QT_AVAILABLE:
                 )
                 painter.setPen(grid_pen)
 
-            # ---- pattern overlays (shaded region + top border) ----
             for pat in self._patterns:
                 si = pat["start_idx"]
                 ei = pat["end_idx"]
@@ -3630,7 +3317,6 @@ if QT_AVAILABLE:
                 painter.setPen(border_pen)
                 painter.drawLine(int(x1), int(mt), int(x1), int(mt + plot_h))
                 painter.drawLine(int(x2), int(mt), int(x2), int(mt + plot_h))
-                # label at top
                 painter.setPen(QPen(col))
                 painter.setFont(self.font())
                 painter.drawText(
@@ -3639,7 +3325,6 @@ if QT_AVAILABLE:
                     f"{pat['emoji']} {pat['label']}",
                 )
 
-            # ---- candles ----
             col_bull = QColor("#22c55e")
             col_bear = QColor("#ef4444")
             col_doji = QColor("#8b949e")
@@ -3658,13 +3343,11 @@ if QT_AVAILABLE:
                 else:
                     color = col_doji
 
-                # wick
                 wick_pen = QPen(color)
                 wick_pen.setWidthF(1.0)
                 painter.setPen(wick_pen)
                 painter.drawLine(int(x), int(y_high), int(x), int(y_low))
 
-                # body
                 body_top    = min(y_open, y_close)
                 body_bottom = max(y_open, y_close)
                 body_h      = max(1.0, body_bottom - body_top)
@@ -3678,7 +3361,6 @@ if QT_AVAILABLE:
                         int(x - half_w), int(body_top),
                         int(candle_w), int(body_h), color
                     )
-                    # hollow border for dark candles (optional style)
                     border = QPen(color)
                     border.setWidthF(0.6)
                     painter.setPen(border)
@@ -3687,7 +3369,6 @@ if QT_AVAILABLE:
                         int(candle_w), int(body_h)
                     )
 
-            # ---- Bollinger-sávok overlay ----
             if self._bb_bands is not None:
                 up_b, mid_b, lo_b = self._bb_bands
 
@@ -3704,7 +3385,6 @@ if QT_AVAILABLE:
                 lo_pts = _poly(lo_b)
                 mid_pts = _poly(mid_b)
 
-                # árnyékolt sáv (felső → alsó visszafelé)
                 if len(up_pts) >= 2 and len(lo_pts) >= 2:
                     from PySide6.QtGui import QPolygonF
                     poly = QPolygonF()
@@ -3734,11 +3414,9 @@ if QT_AVAILABLE:
                 _draw_line(lo_pts, "#818cf8", 1.2)
                 _draw_line(mid_pts, "#a78bfa", 1.0, dashed=True)
 
-            # ---- Indikátor alpanel (RSI / MACD) ----
             if self._indicator:
                 self._draw_indicator_panel(painter, ml, mr, w, mt, plot_h, ind_h, n, to_x, fg_col, grid_col)
 
-            # ---- x-axis labels ----
             painter.setPen(QPen(label_col))
             for idx, lbl in self._x_labels:
                 if 0 <= idx < n:
@@ -3749,7 +3427,6 @@ if QT_AVAILABLE:
                         lbl,
                     )
 
-            # ---- title ----
             title_pen = QPen(title_col)
             painter.setPen(title_pen)
             from PySide6.QtGui import QFont
@@ -3763,7 +3440,6 @@ if QT_AVAILABLE:
                 self._title,
             )
 
-            # ---- pattern panel ----
             if self._patterns:
                 panel_y = h - panel_h
                 painter.fillRect(0, panel_y, w, panel_h, panel_bg)
@@ -3795,7 +3471,6 @@ if QT_AVAILABLE:
             bottom = mt + plot_h + ind_h - 4
             height = max(1.0, bottom - top)
 
-            # háttér + keret
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(0, 0, 0, 0))
             sep = QPen(grid_col)
@@ -3812,7 +3487,6 @@ if QT_AVAILABLE:
                 def ry(v):
                     return bottom - (max(0.0, min(100.0, v)) / 100.0) * height
 
-                # 30 / 50 / 70 szintek
                 for lvl, col, dash in ((70, "#ef4444", True), (50, "#6b7280", True), (30, "#22c55e", True)):
                     pen = QPen(QColor(col))
                     pen.setWidthF(0.8)
@@ -3823,7 +3497,6 @@ if QT_AVAILABLE:
                     painter.drawText(2, int(yy) - 8, ml - 6, 16,
                                      Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                                      str(lvl))
-                # RSI vonal
                 pen = QPen(QColor("#38bdf8"))
                 pen.setWidthF(1.4)
                 painter.setPen(pen)
@@ -3858,12 +3531,10 @@ if QT_AVAILABLE:
                 def my(v):
                     return zero_y - (v / vmax) * (height / 2.0 * 0.9)
 
-                # zéró vonal
                 pen = QPen(QColor("#6b7280"))
                 pen.setWidthF(0.8)
                 painter.setPen(pen)
                 painter.drawLine(int(ml), int(zero_y), int(w - mr), int(zero_y))
-                # histogram oszlopok
                 bar_w = max(1.0, (w - ml - mr) / n * 0.6)
                 painter.setPen(Qt.PenStyle.NoPen)
                 if hist is not None:
@@ -3900,12 +3571,12 @@ if QT_AVAILABLE:
                 painter.drawText(int(ml) + 4, int(top) + 2, 120, 14,
                                  Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "MACD (12,26,9)")
 
-
 if QT_AVAILABLE:
-    # ---- GUI ----
     class App(QWidget):
         def __init__(self):
             super().__init__()
+            self.setObjectName("app_root")
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             self._lang, self._theme = load_app_config()
             global _current_lang
             _current_lang = self._lang
@@ -3919,7 +3590,6 @@ if QT_AVAILABLE:
             self.sound_alerts_enabled = True
             self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
             self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-            # Load persisted config if env vars not set
             if not self.telegram_bot_token or not self.telegram_chat_id:
                 saved_token, saved_chat = load_telegram_config()
                 if not self.telegram_bot_token and saved_token:
@@ -3927,7 +3597,6 @@ if QT_AVAILABLE:
                 if not self.telegram_chat_id and saved_chat:
                     self.telegram_chat_id = saved_chat
             self.telegram_enabled = bool(self.telegram_bot_token and self.telegram_chat_id)
-            # Discord webhook (közvetlen push, bot nélkül)
             self.discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
             if not self.discord_webhook_url:
                 self.discord_webhook_url = load_discord_config()
@@ -3937,14 +3606,12 @@ if QT_AVAILABLE:
             self.ai_model = OPENAI_MODEL_DEFAULT
             self.claude_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             self.claude_model = ANTHROPIC_MODEL_DEFAULT
-            self.claude_cli_model = ""  # üres = a Claude Code alap modellje
+            self.claude_cli_model = ""
             self.nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip()
             self.nvidia_model = NVIDIA_MODEL_DEFAULT
-            # Melyik szolgáltatót használja az AI kommentár:
-            # "openai" | "claude" (API) | "claude_cli" (helyi előfizetés) | "nvidia"
             self.ai_provider = "claude" if self.claude_api_key else "openai"
             self.csv_autosave_enabled = True
-            self.csv_path = str(Path.cwd() / "live_history.csv")
+            self.csv_path = str(APP_STATE_DIR / "live_history.csv")
             self.holdings = load_holdings()
             self.last_prices_live = {}
             self.live_timer = QTimer(self)
@@ -3957,100 +3624,111 @@ if QT_AVAILABLE:
             self._fng_value = None
             self._fng_label = ""
 
-            # ---- MAIN LAYOUT: vertical stack ----
             main_vbox = QVBoxLayout()
-            main_vbox.setContentsMargins(12, 10, 12, 10)
-            main_vbox.setSpacing(8)
+            main_vbox.setContentsMargins(16, 14, 16, 14)
+            main_vbox.setSpacing(12)
 
-            # RGB top accent bar
-            self._rgb_bar = RGBBorderBar(h=4)
-            main_vbox.addWidget(self._rgb_bar)
-
-            # ---- TOP BAR ----
-            top_bar = QHBoxLayout()
+            header = QFrame()
+            header.setObjectName("header")
+            top_bar = QHBoxLayout(header)
+            top_bar.setContentsMargins(16, 10, 12, 10)
             top_bar.setSpacing(10)
-            self.label = RGBTitleLabel("🤖 AI + Indikátor Elemző Pro")
+            logo = QLabel("◆")
+            logo.setObjectName("logo_badge")
+            logo.setFixedSize(36, 36)
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            top_bar.addWidget(logo)
+            title_box = QVBoxLayout()
+            title_box.setSpacing(0)
+            self.label = QLabel("AI + Indikátor Elemző Pro")
             self.label.setObjectName("title_label")
-            top_bar.addWidget(self.label)
-            top_bar.addStretch(1)
-            # stats inline
+            title_box.addWidget(self.label)
+            self.stats_update = QLabel("–")
+            self.stats_update.setObjectName("subtitle_label")
+            title_box.addWidget(self.stats_update)
+            top_bar.addLayout(title_box)
+            top_bar.addSpacing(12)
             self.stats_assets = QLabel("Kiválasztva: 0")
             self.stats_assets.setObjectName("stat_chip")
             self.stats_decisions = QLabel("Vétel 0 | Eladás 0 | Várj 0")
             self.stats_decisions.setObjectName("stat_chip")
-            self.stats_update = QLabel("–")
-            self.stats_update.setObjectName("stat_chip_dim")
+            self.fng_label = QLabel("😐 F&G: –")
+            self.fng_label.setObjectName("fng_chip")
+            self.fng_label.setToolTip("Crypto Fear & Greed Index (alternative.me)")
             top_bar.addWidget(self.stats_assets)
             top_bar.addWidget(self.stats_decisions)
-            top_bar.addWidget(self.stats_update)
-            # primary action buttons in top bar
-            self.btn = AnimatedButton("▶  Elemzés")
-            self.btn.setObjectName("primary_btn")
-            self.btn.clicked.connect(lambda: self.run_analysis())
-            top_bar.addWidget(self.btn)
+            top_bar.addWidget(self.fng_label)
+            top_bar.addStretch(1)
+            live_box = QFrame()
+            live_box.setObjectName("live_box")
+            live_row = QHBoxLayout(live_box)
+            live_row.setContentsMargins(10, 2, 4, 2)
+            live_row.setSpacing(6)
+            self._pulse_dot = PulsingDot()
+            live_row.addWidget(self._pulse_dot)
+            self.live_status = QLabel("Élő mód: kikapcsolva")
+            self.live_status.setObjectName("live_status")
+            live_row.addWidget(self.live_status)
+            self.btn_interval = QPushButton("⏱  Időköz: 30s")
+            self.btn_interval.setObjectName("ghost_btn")
+            self.btn_interval.clicked.connect(self.set_live_interval)
+            live_row.addWidget(self.btn_interval)
+            top_bar.addWidget(live_box)
             self.btn_live = AnimatedButton("📡  Élő mód indítása")
             self.btn_live.setObjectName("live_btn")
             self.btn_live.clicked.connect(self.toggle_live_mode)
             top_bar.addWidget(self.btn_live)
-            self.btn_interval = AnimatedButton("⏱  Időköz: 30s")
-            self.btn_interval.clicked.connect(self.set_live_interval)
-            top_bar.addWidget(self.btn_interval)
-            self.live_status = QLabel("Élő mód: kikapcsolva")
-            self.live_status.setObjectName("stat_chip_dim")
-            self._pulse_dot = PulsingDot()
-            top_bar.addWidget(self._pulse_dot)
-            top_bar.addWidget(self.live_status)
+            self.btn = AnimatedButton("▶  Elemzés")
+            self.btn.setObjectName("primary_btn")
+            self.btn.setToolTip("F5")
+            self.btn.clicked.connect(lambda: self.run_analysis())
+            top_bar.addWidget(self.btn)
 
-            self.fng_label = QLabel("😐 F&G: –")
-            self.fng_label.setObjectName("fng_chip")
-            self.fng_label.setToolTip("Crypto Fear & Greed Index (alternative.me)")
-            top_bar.addWidget(self.fng_label)
+            main_vbox.addWidget(header)
 
-            main_vbox.addLayout(top_bar)
-
-            # ---- CONTENT ROW ----
             content_row = QHBoxLayout()
-            content_row.setSpacing(10)
+            content_row.setSpacing(12)
 
-            # ---- LEFT PANEL ----
             left_col = QVBoxLayout()
-            left_col.setSpacing(6)
+            left_col.setContentsMargins(14, 14, 14, 14)
+            left_col.setSpacing(8)
 
-            # Category chips
-            chip_row = QHBoxLayout()
-            chip_row.setSpacing(4)
+            assets_title = QLabel("ESZKÖZÖK")
+            assets_title.setObjectName("section_label")
+            left_col.addWidget(assets_title)
+
+            chip_grid = QGridLayout()
+            chip_grid.setHorizontalSpacing(4)
+            chip_grid.setVerticalSpacing(4)
             self._active_category = "All"
             self._category_btns = {}
-            for cat in ASSET_CATEGORIES:
+            for idx, cat in enumerate(ASSET_CATEGORIES):
                 b = QPushButton(cat)
                 b.setObjectName("chip_active" if cat == "All" else "chip")
                 b.setCheckable(True)
                 b.setChecked(cat == "All")
                 b.clicked.connect(lambda checked, c=cat: self.set_category_filter(c))
-                chip_row.addWidget(b)
+                chip_grid.addWidget(b, idx // 4, idx % 4)
                 self._category_btns[cat] = b
-            chip_row.addStretch(1)
-            left_col.addLayout(chip_row)
 
-            # Search
             self.asset_search = QLineEdit()
             self.asset_search.setPlaceholderText("Keresés eszköz névre…")
             self.asset_search.textChanged.connect(self.filter_asset_list)
             left_col.addWidget(self.asset_search)
+            left_col.addLayout(chip_grid)
 
-            # Fav row
             fav_row = QHBoxLayout()
             self.cb_favorites_only = QCheckBox("Csak kedvencek")
             self.cb_favorites_only.toggled.connect(self.on_favorites_filter_toggled)
             fav_row.addWidget(self.cb_favorites_only)
             self.btn_fav_toggle = QPushButton("☆")
+            self.btn_fav_toggle.setObjectName("ghost_btn")
             self.btn_fav_toggle.setToolTip("Kedvenc váltás")
-            self.btn_fav_toggle.setFixedWidth(32)
             self.btn_fav_toggle.clicked.connect(self.toggle_favorite_selection)
+            fav_row.addStretch(1)
             fav_row.addWidget(self.btn_fav_toggle)
             left_col.addLayout(fav_row)
 
-            # Currency + amount row
             cur_row = QHBoxLayout()
             self.cur_label = QLabel("Megjelenítés:")
             cur_row.addWidget(self.cur_label)
@@ -4060,77 +3738,74 @@ if QT_AVAILABLE:
             cur_row.addWidget(self.currency_combo, 1)
             left_col.addLayout(cur_row)
 
-            # Asset list
             self.list_widget = QListWidget()
             self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             for name in ASSETS:
                 self.list_widget.addItem(name)
             self.list_widget.setCurrentRow(0)
-            self.list_widget.setMinimumWidth(240)
-            self.list_widget.setMaximumWidth(300)
+            self.list_widget.setObjectName("asset_list")
             left_col.addWidget(self.list_widget, 1)
 
-            # Bottom left: select all, clear, amount
             bottom_left = QHBoxLayout()
+            bottom_left.setSpacing(6)
             self.btn_select_all = QPushButton("☑ Összes")
+            self.btn_select_all.setObjectName("compact_btn")
             self.btn_select_all.clicked.connect(self.select_all_assets)
             bottom_left.addWidget(self.btn_select_all)
             self.btn_clear = QPushButton("🗑 Törlés")
+            self.btn_clear.setObjectName("compact_btn")
             self.btn_clear.clicked.connect(self.output_clear)
             bottom_left.addWidget(self.btn_clear)
             self.btn_set_amount = QPushButton("💰 Összeg")
+            self.btn_set_amount.setObjectName("compact_btn")
             self.btn_set_amount.clicked.connect(self.set_invest_amount)
             bottom_left.addWidget(self.btn_set_amount)
             left_col.addLayout(bottom_left)
 
-            # ---- Összegző panel (áttekintés) ----
             self.summary_panel = QLabel()
             self.summary_panel.setObjectName("summary_panel")
             self.summary_panel.setWordWrap(True)
             self.summary_panel.setTextFormat(Qt.TextFormat.RichText)
-            self.summary_panel.setMinimumHeight(132)
+            self.summary_panel.setMinimumHeight(110)
             self.summary_panel.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
             left_col.addWidget(self.summary_panel)
 
-            left_panel = QWidget()
+            left_panel = QFrame()
+            left_panel.setObjectName("sidebar")
             left_panel.setLayout(left_col)
+            left_panel.setFixedWidth(372)
             content_row.addWidget(left_panel)
 
             right = QVBoxLayout()
-            right.setSpacing(8)
+            right.setContentsMargins(14, 8, 14, 14)
+            right.setSpacing(10)
 
-            layout = main_vbox  # alias so the rest of __init__ works
+            layout = main_vbox
 
-            # ---- NAV BAR (dropdown menu) ----
-            from PySide6.QtWidgets import QStackedWidget
-            nav_row = QHBoxLayout()
-            nav_row.setSpacing(8)
-            self.nav_combo = QComboBox()
-            self.nav_combo.setObjectName("nav_combo")
-            self.nav_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-            self.nav_combo.setMinimumWidth(220)
-            nav_row.addWidget(self.nav_combo)
-            nav_row.addStretch(1)
-            right.addLayout(nav_row)
+            from PySide6.QtWidgets import QStackedWidget, QTabBar
+            self.nav_tabs = QTabBar()
+            self.nav_tabs.setObjectName("nav_tabs")
+            self.nav_tabs.setExpanding(False)
+            self.nav_tabs.setDrawBase(False)
+            self.nav_tabs.setUsesScrollButtons(True)
+            self.nav_tabs.setElideMode(Qt.TextElideMode.ElideNone)
+            right.addWidget(self.nav_tabs)
 
             self.stacked = QStackedWidget()
-            self.nav_combo.currentIndexChanged.connect(self.stacked.setCurrentIndex)
+            self.nav_tabs.currentChanged.connect(self.stacked.setCurrentIndex)
 
-            # keep a tab-compatible alias so existing addTab calls work
             class _FakeTabs:
-                def __init__(self, stacked, combo):
+                def __init__(self, stacked, bar):
                     self._s = stacked
-                    self._c = combo
-                    self._labels = []
+                    self._b = bar
                 def addTab(self, widget, label):
                     self._s.addWidget(widget)
-                    self._labels.append(label)
-                    self._c.addItem(label)
+                    self._b.addTab(label)
                 def count(self):
                     return self._s.count()
                 def setTabText(self, i, text):
-                    self._labels[i] = text
-            self.tabs = _FakeTabs(self.stacked, self.nav_combo)
+                    self._b.setTabText(i, text)
+            self.tabs = _FakeTabs(self.stacked, self.nav_tabs)
 
             analysis_tab = QWidget()
             analysis_layout = QVBoxLayout()
@@ -4218,16 +3893,14 @@ if QT_AVAILABLE:
             self.chart_subtitle.setWordWrap(True)
             chart_outer.addWidget(self.chart_subtitle)
 
-            # Gyertyadiagram widget (QPainter)
             self.candle_widget = CandlestickWidget()
             self.candle_widget.setMinimumHeight(380)
             chart_outer.addWidget(self.candle_widget, 1)
 
-            # Összehasonlító nézet (eredeti QChartView marad, rejtve ha nem kell)
             self.chart_view = QChartView()
             self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
             self.chart_view.setMinimumHeight(320)
-            self.chart_view.setVisible(False)   # gyertya módban rejtve
+            self.chart_view.setVisible(False)
             chart_outer.addWidget(self.chart_view, 1)
 
             chart_tab.setLayout(chart_outer)
@@ -4236,7 +3909,6 @@ if QT_AVAILABLE:
             alerts_tab = QWidget()
             alerts_layout = QVBoxLayout()
 
-            # ---- Riasztási szabály dashboard (vizuális szerkesztő) ----
             rules_group = QGroupBox("🔔  Riasztási szabályok")
             rules_group.setObjectName("settings_group")
             rules_v = QVBoxLayout()
@@ -4300,7 +3972,6 @@ if QT_AVAILABLE:
             portfolio_layout = QVBoxLayout()
             portfolio_layout.setSpacing(6)
 
-            # Holdings editor toolbar
             ph_row = QHBoxLayout()
             self.btn_edit_holdings = QPushButton("✏️  Mennyiségek szerkesztése")
             self.btn_edit_holdings.clicked.connect(self.edit_holdings_dialog)
@@ -4311,10 +3982,10 @@ if QT_AVAILABLE:
             ph_row.addStretch(1)
             self.portfolio_total_label = QLabel("")
             self.portfolio_total_label.setObjectName("stat_chip")
+            self.portfolio_total_label.setVisible(False)
             ph_row.addWidget(self.portfolio_total_label)
             portfolio_layout.addLayout(ph_row)
 
-            # Holdings table
             self.holdings_table = QTableWidget()
             self.holdings_table.setColumnCount(6)
             self.holdings_table.setHorizontalHeaderLabels(
@@ -4324,7 +3995,6 @@ if QT_AVAILABLE:
             self.holdings_table.horizontalHeader().setStretchLastSection(True)
             portfolio_layout.addWidget(self.holdings_table)
 
-            # Summary text area
             self.portfolio_output = QTextEdit()
             self.portfolio_output.setReadOnly(True)
             self.portfolio_output.setMaximumHeight(140)
@@ -4375,7 +4045,6 @@ if QT_AVAILABLE:
             news_tab.setLayout(news_layout)
             self.tabs.addTab(news_tab, "Hírek")
 
-            # ---- SETTINGS TAB (grouped, scrollable) ----
             settings_tab = QWidget()
             settings_outer = QVBoxLayout()
             settings_outer.setContentsMargins(0, 0, 0, 0)
@@ -4397,7 +4066,6 @@ if QT_AVAILABLE:
                 gb.setLayout(inner)
                 return gb, inner
 
-            # ── 1. Megjelenítés ──
             grp_appearance, lay_appearance = make_group("🎨  Megjelenítés")
             r1 = QHBoxLayout()
             self.lang_label_widget = QLabel("Nyelv:")
@@ -4420,7 +4088,6 @@ if QT_AVAILABLE:
             lay_appearance.addLayout(r2)
             settings_layout.addWidget(grp_appearance)
 
-            # ── 2. Általános ──
             grp_general, lay_general = make_group("⚙️  Általános")
             self.auto_clear_checkbox = QCheckBox("Elemzés törlése minden frissítés előtt")
             self.auto_clear_checkbox.setChecked(self.auto_clear_analysis)
@@ -4451,7 +4118,6 @@ if QT_AVAILABLE:
             self.schedule_timer.timeout.connect(self.schedule_tick)
             self.schedule_timer.start(30_000)
 
-            # ── 3. Riasztások ──
             grp_alerts, lay_alerts = make_group("🔔  Riasztások")
             self.btn_alert_threshold = QPushButton("⚡  Küszöb: 0.80%")
             self.btn_alert_threshold.clicked.connect(self.set_alert_threshold)
@@ -4461,7 +4127,6 @@ if QT_AVAILABLE:
             lay_alerts.addWidget(self.btn_edit_alert_rules)
             settings_layout.addWidget(grp_alerts)
 
-            # ── 4. Telegram ──
             grp_tg, lay_tg = make_group("📲  Telegram")
             self.btn_telegram = QPushButton("⚙️  Beállítás (token + chat ID)")
             self.btn_telegram.setObjectName("telegram_btn")
@@ -4493,7 +4158,6 @@ if QT_AVAILABLE:
             lay_tg.addWidget(self.telegram_help)
             settings_layout.addWidget(grp_tg)
 
-            # ── 4b. Discord ──
             grp_dc, lay_dc = make_group("💬  Discord")
             self.btn_discord = QPushButton("⚙️  Beállítás (webhook URL)")
             self.btn_discord.setObjectName("discord_btn")
@@ -4522,7 +4186,6 @@ if QT_AVAILABLE:
             lay_dc.addWidget(self.discord_help)
             settings_layout.addWidget(grp_dc)
 
-            # ── 5. AI Kommentár ──
             grp_ai, lay_ai = make_group("🤖  AI Kommentár")
             self.ai_checkbox = QCheckBox("Felhő AI magyarázat engedélyezve")
             self.ai_checkbox.setChecked(self.ai_commentary_enabled)
@@ -4557,11 +4220,13 @@ if QT_AVAILABLE:
             settings_tab.setLayout(settings_outer)
             self.tabs.addTab(settings_tab, "Beállítások")
 
-            right.addWidget(self.stacked)
-            content_row.addLayout(right)
+            right.addWidget(self.stacked, 1)
+            right_panel = QFrame()
+            right_panel.setObjectName("content_card")
+            right_panel.setLayout(right)
+            content_row.addWidget(right_panel, 1)
             main_vbox.addLayout(content_row)
             self.setLayout(main_vbox)
-            # ---- Restore session state ----
             session = load_session_state()
             if "invest_amount" in session and session["invest_amount"] is not None:
                 self.invest_amount = session["invest_amount"]
@@ -4596,11 +4261,9 @@ if QT_AVAILABLE:
                 except (KeyError, TypeError, ValueError):
                     pass
 
-            # Connect signals
             self.list_widget.itemSelectionChanged.connect(self.update_selected_count)
             self.list_widget.itemSelectionChanged.connect(self.refresh_price_chart)
 
-            # Restore selected assets (block signals to avoid premature chart refresh)
             if "selected_assets" in session and session["selected_assets"]:
                 saved_sel = set(session["selected_assets"])
                 self.list_widget.blockSignals(True)
@@ -4611,9 +4274,8 @@ if QT_AVAILABLE:
                         item.setSelected(True)
                 self.list_widget.blockSignals(False)
 
-            # Restore active tab
             if "active_tab" in session:
-                self.stacked.setCurrentIndex(int(session.get("active_tab", 0)))
+                self.nav_tabs.setCurrentIndex(int(session.get("active_tab", 0)))
 
             self.update_selected_count()
             self.refresh_telegram_status()
@@ -4623,11 +4285,9 @@ if QT_AVAILABLE:
             self.update_summary_panel()
             self.retranslate_ui()
 
-            # F5 shortcut
             sc = QShortcut(QKeySequence("F5"), self)
             sc.activated.connect(self.run_analysis)
 
-            # Fear & Greed and chart: fetch async after window is shown
             self._fng_timer = QTimer(self)
             self._fng_timer.setSingleShot(True)
             self._fng_timer.timeout.connect(self._fetch_fng)
@@ -4638,20 +4298,6 @@ if QT_AVAILABLE:
             self._startup_chart_timer.timeout.connect(self.refresh_price_chart)
             self._startup_chart_timer.start(400)
 
-            # RGB animation
-            self._rgb_hue = 0
-            self._rgb_timer = QTimer(self)
-            self._rgb_timer.timeout.connect(self._rgb_tick)
-            self._rgb_timer.start(35)
-
-            # Particle overlay (behind all widgets)
-            self._particle_overlay = ParticleOverlay(self)
-            self._particle_overlay.resize(self.size())
-            self._particle_overlay.set_dark(self._theme == "dark")
-            self._particle_overlay.lower()
-            self._particle_overlay.show()
-
-            # Output fade-in effect
             self._out_opacity = QGraphicsOpacityEffect(self.output)
             self._out_opacity.setOpacity(1.0)
             self.output.setGraphicsEffect(self._out_opacity)
@@ -4685,11 +4331,6 @@ if QT_AVAILABLE:
             }
             save_session_state(data)
 
-        def resizeEvent(self, e):
-            super().resizeEvent(e)
-            if hasattr(self, "_particle_overlay"):
-                self._particle_overlay.resize(e.size())
-
         def _fade_in_output(self):
             """Briefly fade-in the analysis output widget after update."""
             if not hasattr(self, "_out_fade"):
@@ -4699,45 +4340,6 @@ if QT_AVAILABLE:
             self._out_fade.setStartValue(0.0)
             self._out_fade.setEndValue(1.0)
             self._out_fade.start()
-
-        def _rgb_tick(self):
-            self._rgb_hue = (self._rgb_hue + 0.8) % 360
-            h = self._rgb_hue / 360.0
-
-            def hsv_col(hue_offset, s=0.88, v=1.0):
-                r, g, b = colorsys.hsv_to_rgb((h + hue_offset) % 1.0, s, v)
-                return QColor(int(r * 255), int(g * 255), int(b * 255))
-
-            c0 = hsv_col(0.00)
-            c1 = hsv_col(0.33)
-            c2 = hsv_col(0.66)
-
-            stops = [(0.0, c0), (0.5, c1), (1.0, c2)]
-
-            # 1. RGB top bar
-            if hasattr(self, "_rgb_bar"):
-                self._rgb_bar.set_stops(stops)
-
-            # 2. Gradient title text
-            if hasattr(self, "label") and isinstance(self.label, RGBTitleLabel):
-                self.label.set_stops(stops)
-
-            # 3. Primary button glow cycles with RGB
-            if hasattr(self, "btn") and isinstance(self.btn, AnimatedButton):
-                self.btn.set_glow_color(c0.red(), c0.green(), c0.blue())
-
-            # 4. Live button glow cycles with RGB (offset hue)
-            if hasattr(self, "btn_live") and isinstance(self.btn_live, AnimatedButton):
-                c_live = hsv_col(0.5)
-                self.btn_live.set_glow_color(c_live.red(), c_live.green(), c_live.blue())
-
-            # 5. Shimmer bar gradient tint follows hue
-            if hasattr(self, "_shimmer") and self._shimmer.isVisible():
-                self._shimmer.update()
-
-            # 6. Particle overlay theme sync
-            if hasattr(self, "_particle_overlay"):
-                self._particle_overlay.set_dark(self._theme == "dark")
 
         def tr_(self, key, **kwargs):
             return _tr(key, lang=self._lang, **kwargs)
@@ -4772,20 +4374,13 @@ if QT_AVAILABLE:
             self.btn_select_all.setText(t("select_all"))
             self.btn_clear.setText(t("clear_output"))
             self.btn_set_amount.setText(t("set_amount"))
-            # nav dropdown items
             tab_keys = ["tab_analysis", "tab_chart", "tab_alerts", "tab_portfolio",
                         "tab_correlation", "tab_history", "tab_news", "tab_settings"]
-            cur_idx = self.nav_combo.currentIndex()
-            self.nav_combo.blockSignals(True)
-            self.nav_combo.clear()
-            for k in tab_keys:
-                self.nav_combo.addItem(t(k))
-            self.nav_combo.setCurrentIndex(max(0, cur_idx))
-            self.nav_combo.blockSignals(False)
-            self.stacked.setCurrentIndex(max(0, cur_idx))
+            for i, k in enumerate(tab_keys):
+                if i < self.nav_tabs.count():
+                    self.nav_tabs.setTabText(i, t(k))
             self.btn_copy_output.setText(t("copy_output"))
             self.output.setPlaceholderText(t("analysis_placeholder"))
-            # chart range buttons
             ranges = t("chart_ranges") if isinstance(t("chart_ranges"), list) else ["1d","5d","1mo","3mo"]
             for i, btn in enumerate(self.chart_range_btns):
                 if i < len(ranges):
@@ -4823,7 +4418,6 @@ if QT_AVAILABLE:
             self.cb_schedule_analysis.setText(t("sched_label"))
             self.lang_label_widget.setText(t("lang_label"))
             self.theme_label_widget.setText(t("theme_label"))
-            # theme combo items
             ti = self.theme_combo.currentIndex()
             self.theme_combo.blockSignals(True)
             self.theme_combo.clear()
@@ -5002,583 +4596,312 @@ if QT_AVAILABLE:
             self.portfolio_total_label.setText(
                 f"Összesen: {total_value:,.0f} {currency}"
             )
+            self.portfolio_total_label.setVisible(True)
 
         def apply_theme(self):
-            if self._theme == "light":
-                self.apply_styles_light()
-            else:
-                self.apply_styles()
+            self.apply_styles()
             if hasattr(self, "candle_widget"):
                 self.candle_widget.set_dark_mode(self._theme == "dark")
             if hasattr(self, "btn"):
-                self._primary_shadow = QGraphicsDropShadowEffect(self.btn)
-                self._primary_shadow.setBlurRadius(0)
-                self._primary_shadow.setOffset(0, 0)
-                self._primary_shadow.setColor(QColor(34, 197, 94, 160))
-                self.btn.setGraphicsEffect(self._primary_shadow)
+                self.btn.set_glow_color(124, 140, 255)
+            if hasattr(self, "btn_live"):
+                self.btn_live.set_glow_color(245, 177, 66)
 
-        def apply_styles(self):
-            self.setStyleSheet("""
-/* ── DARK THEME · "Aurum" premium fintech (gold + violet, glass surfaces) ──
-   Design-system tokens (ui-ux-pro-max › Fintech/Crypto):
-     bg-deep #0f172a · surface #1a2336 · elevated #222b40 · glass-line rgba(255,255,255,.06)
-     fg #f8fafc · muted-fg #94a3b8 · border #334155
-     primary/gold #f59e0b · secondary #fbbf24 · accent/violet #8b5cf6
-     danger #ef4444 · ring #f59e0b (3px focus). No pure black; hairline lit borders. */
+        THEME_TOKENS = {
+            "dark": {
+                "bg": "#0b1018", "surface": "#111826", "raised": "#161f30",
+                "hover": "#1c2740", "border": "#222d41", "border_strong": "#2f3c55",
+                "text": "#e7ebf3", "muted": "#8b96ab", "faint": "#5d6880",
+                "accent": "#5b6cff", "accent_hover": "#6f7eff", "accent_soft": "#1d2350",
+                "accent_text": "#a3adff", "on_accent": "#ffffff",
+                "live": "#f5b142", "live_hover": "#f8c266", "on_live": "#1a1206",
+                "stop": "#ef4444", "stop_hover": "#f26464",
+                "tg": "#38a3e8", "dc": "#7983f5", "danger": "#f87171",
+                "scroll": "#2f3c55",
+            },
+            "light": {
+                "bg": "#f3f5f9", "surface": "#ffffff", "raised": "#f7f8fb",
+                "hover": "#eef1f7", "border": "#e2e6ee", "border_strong": "#cfd5e1",
+                "text": "#111827", "muted": "#5b6577", "faint": "#8a93a5",
+                "accent": "#4f5ff5", "accent_hover": "#3f4fe6", "accent_soft": "#e8ebff",
+                "accent_text": "#3f4fe6", "on_accent": "#ffffff",
+                "live": "#e9a23b", "live_hover": "#d89128", "on_live": "#1a1206",
+                "stop": "#dc2626", "stop_hover": "#c81e1e",
+                "tg": "#1f88cf", "dc": "#5865f2", "danger": "#dc2626",
+                "scroll": "#cfd5e1",
+            },
+        }
 
-/* Base */
+        THEME_QSS = """
 QWidget {
-    background-color: #0f172a;
-    color: #e8edf6;
-    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background: transparent;
+    color: $text;
+    font-family: 'Inter', 'Segoe UI', 'Cantarell', 'Helvetica Neue', Arial, sans-serif;
     font-size: 13px;
 }
-QWidget:disabled { color: #4a5772; }
+QWidget:disabled { color: $faint; }
+QToolTip { background: $raised; color: $text; border: 1px solid $border_strong; border-radius: 6px; padding: 5px 8px; }
 
-/* Adat-widgetek monospace-e — tabuláris számjegyek (ár, %, idő nem ugrál) */
-QListWidget, QTextEdit, QTableWidget, QLineEdit, QTimeEdit,
-QLabel#stat_chip, QLabel#fng_chip {
+QTextEdit, QTableWidget, QTimeEdit, QLabel#stat_chip, QLabel#fng_chip {
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'DejaVu Sans Mono', monospace;
 }
 
-/* Labels */
-QLabel { color: #e8edf6; font-size: 13px; }
-QLabel#title_label { font-size: 17px; font-weight: 800; padding: 2px 0; color: #f8fafc; letter-spacing: 0.01em; }
-QLabel#stat_chip {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #33290f, stop:1 #2a2411);
-    border: 1px solid #7a5f22;
-    border-radius: 11px;
-    padding: 3px 11px;
-    font-size: 11px;
-    color: #fcd34d;
-    font-weight: 700;
+QFrame#header, QFrame#sidebar, QFrame#content_card {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 14px;
 }
-QLabel#stat_chip_dim { font-size: 11px; color: #94a3b8; padding: 3px 4px; }
-QLabel#status_label  { font-size: 11px; color: #94a3b8; padding: 1px 4px; }
-QLabel#fng_chip {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #33290f, stop:1 #2a2411);
-    border: 1px solid #7a5f22;
-    border-radius: 11px; padding: 3px 11px;
-    font-size: 11px; font-weight: 800; color: #fcd34d;
-}
+QWidget#app_root { background: $bg; }
+QDialog, QMessageBox, QInputDialog, QFileDialog { background: $surface; }
+QMenu { background: $raised; border: 1px solid $border_strong; border-radius: 8px; padding: 4px; }
+QMenu::item { padding: 6px 14px; border-radius: 6px; }
+QMenu::item:selected { background: $accent_soft; color: $accent_text; }
 
-/* Scrollable containers */
+QLabel { color: $text; font-size: 13px; }
+QLabel#logo_badge {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 $accent, stop:1 $accent_hover);
+    color: $on_accent; border-radius: 10px; font-size: 17px; font-weight: 800;
+}
+QLabel#title_label { font-size: 16px; font-weight: 700; color: $text; }
+QLabel#subtitle_label { font-size: 11px; color: $muted; }
+QLabel#section_label { font-size: 10px; font-weight: 700; color: $faint; letter-spacing: 0.12em; padding: 0 2px; }
+QLabel#stat_chip, QLabel#fng_chip {
+    background: $raised;
+    border: 1px solid $border;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: $text;
+    font-weight: 600;
+}
+QLabel#stat_chip_dim { font-size: 11px; color: $muted; padding: 3px 4px; }
+QLabel#status_label  { font-size: 11px; color: $muted; padding: 1px 4px; }
+QLabel#summary_panel {
+    background: $raised; border: 1px solid $border; border-radius: 10px; padding: 10px 12px;
+}
+QPushButton#compact_btn { padding: 7px 4px; font-size: 11px; }
+QLabel#live_status { font-size: 11px; color: $muted; }
+QFrame#live_box { background: $raised; border: 1px solid $border; border-radius: 10px; }
+
 QScrollArea { border: none; background: transparent; }
 
-/* List + Text — glass surface */
 QListWidget, QTextEdit {
-    background-color: #1a2336;
-    border: 1px solid #2c374d;
-    border-top: 1px solid #3a4a66;
-    border-radius: 14px;
+    background-color: $bg;
+    border: 1px solid $border;
+    border-radius: 10px;
     padding: 6px;
-    color: #e8edf6;
-    selection-background-color: #8b5cf6;
-    selection-color: #ffffff;
+    color: $text;
+    selection-background-color: $accent;
+    selection-color: $on_accent;
     font-size: 12px;
 }
-QListWidget::item { padding: 6px 9px; border-radius: 8px; margin: 1px 0; }
-QListWidget::item:selected { background: #6d28d9; color: #fff; }
-QListWidget::item:hover:!selected { background: #232f47; }
+QListWidget#asset_list { font-size: 13px; padding: 4px; }
+QListWidget::item { padding: 7px 10px; border-radius: 7px; margin: 1px 0; }
+QListWidget::item:selected { background: $accent_soft; color: $accent_text; font-weight: 600; }
+QListWidget::item:hover:!selected { background: $hover; }
 
-/* Inputs */
 QLineEdit, QTimeEdit {
-    background: #141d30;
-    color: #e8edf6;
-    border: 1px solid #2c374d;
-    border-radius: 10px;
+    background: $bg;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 9px;
     padding: 7px 11px;
-    font-size: 12px;
-    selection-background-color: #8b5cf6;
-    selection-color: #ffffff;
+    font-size: 13px;
+    selection-background-color: $accent;
+    selection-color: $on_accent;
 }
-QLineEdit:focus, QTimeEdit:focus { border: 2px solid #f59e0b; }
+QLineEdit:focus, QTimeEdit:focus { border: 1px solid $accent; }
+QTimeEdit::up-button, QTimeEdit::down-button { border: none; background: transparent; width: 16px; }
 
-/* ComboBox (generic) */
 QComboBox {
-    background: #141d30;
-    color: #e8edf6;
-    border: 1px solid #2c374d;
-    border-radius: 10px;
+    background: $bg;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 9px;
     padding: 6px 11px;
 }
-QComboBox:hover { border-color: #64748b; }
-QComboBox:focus { border: 2px solid #f59e0b; }
+QComboBox:hover { border-color: $border_strong; }
+QComboBox:focus { border: 1px solid $accent; }
 QComboBox::drop-down { border: none; padding-right: 6px; }
 QComboBox QAbstractItemView {
-    background: #1c2740;
-    border: 1px solid #3b4d6b;
-    border-radius: 10px;
-    color: #e8edf6;
-    padding: 4px;
-    selection-background-color: #8b5cf6;
-    outline: 0;
-}
-
-/* Nav ComboBox — elevated header pill */
-QComboBox#nav_combo {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #222b40, stop:1 #172035);
-    color: #f8fafc;
-    border: 1px solid #3b4d6b;
-    border-radius: 12px;
-    padding: 8px 36px 8px 16px;
-    font-size: 13px;
-    font-weight: 800;
-    min-height: 34px;
-}
-QComboBox#nav_combo:hover { border-color: #f59e0b; color: #fff; }
-QComboBox#nav_combo::drop-down { border: none; width: 30px; }
-QComboBox#nav_combo QAbstractItemView {
-    background: #1c2740;
-    border: 1px solid #3b4d6b;
-    border-radius: 12px;
-    color: #e8edf6;
-    padding: 5px;
-    selection-background-color: #f59e0b;
-    selection-color: #0f172a;
-    outline: 0;
-}
-QComboBox#nav_combo QAbstractItemView::item {
-    padding: 9px 16px;
+    background: $raised;
+    border: 1px solid $border_strong;
     border-radius: 8px;
-    min-height: 28px;
+    color: $text;
+    padding: 4px;
+    selection-background-color: $accent_soft;
+    selection-color: $accent_text;
+    outline: 0;
 }
 
-/* Buttons — subtle glass */
+QTabBar#nav_tabs { background: transparent; }
+QTabBar#nav_tabs::tab {
+    background: transparent;
+    color: $muted;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 14px 9px 14px;
+    margin-right: 2px;
+    font-weight: 600;
+    font-size: 13px;
+}
+QTabBar#nav_tabs::tab:hover { color: $text; border-bottom: 2px solid $border_strong; }
+QTabBar#nav_tabs::tab:selected { color: $text; border-bottom: 2px solid $accent; }
+QTabBar QToolButton { background: $raised; border: 1px solid $border; border-radius: 6px; }
+
 QPushButton {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #232e46, stop:1 #1a2336);
-    color: #e8edf6;
-    border: 1px solid #33445f;
-    border-radius: 10px;
-    padding: 7px 15px;
+    background: $raised;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 9px;
+    padding: 7px 14px;
     font-weight: 600;
     font-size: 12px;
 }
-QPushButton:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #2b3a58, stop:1 #202b42);
-    color: #f8fafc;
-    border-color: #566b8c;
+QPushButton:hover { background: $hover; border-color: $border_strong; }
+QPushButton:pressed { background: $accent_soft; border-color: $accent; color: $accent_text; }
+QPushButton:focus { border: 1px solid $accent; }
+
+QPushButton#ghost_btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: $muted;
+    padding: 5px 10px;
 }
-QPushButton:pressed {
-    background: #141d30;
-    border-color: #f59e0b;
-    color: #fcd34d;
-}
-QPushButton:focus { border: 2px solid #f59e0b; }
+QPushButton#ghost_btn:hover { background: $hover; color: $text; }
 
 QPushButton#primary_btn {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #15803d, stop:1 #22c55e);
-    color: #fff;
+    background: $accent;
+    color: $on_accent;
     border: none;
     font-size: 13px;
-    padding: 10px 24px;
-    border-radius: 12px;
-    font-weight: 800;
+    padding: 10px 22px;
+    border-radius: 10px;
+    font-weight: 700;
 }
-QPushButton#primary_btn:hover {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #22c55e, stop:1 #4ade80);
-}
-QPushButton#primary_btn:pressed { background: #166534; }
-QPushButton#primary_btn:focus { border: 2px solid #86efac; }
+QPushButton#primary_btn:hover { background: $accent_hover; }
+QPushButton#primary_btn:pressed { background: $accent_hover; }
+QPushButton#primary_btn:focus { border: 2px solid $accent_text; }
 
 QPushButton#live_btn {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #b45309, stop:1 #f59e0b);
-    color: #1a1206;
-    border: none;
+    background: transparent;
+    color: $live;
+    border: 1px solid $live;
     font-size: 13px;
-    padding: 10px 24px;
-    border-radius: 12px;
-    font-weight: 800;
+    padding: 9px 18px;
+    border-radius: 10px;
+    font-weight: 700;
 }
-QPushButton#live_btn:hover {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #f59e0b, stop:1 #fbbf24);
-}
-QPushButton#live_btn:pressed { background: #92400e; color: #fff; }
-QPushButton#live_btn:focus { border: 2px solid #fde68a; }
+QPushButton#live_btn:hover { background: $live; color: $on_live; }
+QPushButton#live_btn:pressed { background: $live_hover; color: $on_live; }
 
 QPushButton#live_btn_active {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #dc2626, stop:1 #ef4444);
-    color: #fff;
+    background: $stop;
+    color: #ffffff;
     border: none;
     font-size: 13px;
-    padding: 10px 24px;
-    border-radius: 12px;
-    font-weight: 800;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-weight: 700;
 }
-QPushButton#live_btn_active:hover { background: #ef4444; }
+QPushButton#live_btn_active:hover { background: $stop_hover; }
 
-QPushButton#telegram_btn {
-    background: #16273f; color: #7cc0ff; border-color: #2563eb;
-}
-QPushButton#telegram_btn:hover { background: #2563eb; color: #fff; }
+QPushButton#telegram_btn { color: $tg; }
+QPushButton#telegram_btn:hover { background: $tg; color: #ffffff; border-color: $tg; }
+QPushButton#discord_btn { color: $dc; }
+QPushButton#discord_btn:hover { background: $dc; color: #ffffff; border-color: $dc; }
+QPushButton#danger_btn { color: $danger; }
+QPushButton#danger_btn:hover { background: $danger; color: #ffffff; border-color: $danger; }
 
-QPushButton#discord_btn {
-    background: #221f4a; color: #c1c6ff; border-color: #5865f2;
-}
-QPushButton#discord_btn:hover { background: #5865f2; color: #fff; }
-
-QPushButton#danger_btn {
-    background: #241019; color: #f87171; border-color: #991b1b;
-}
-QPushButton#danger_btn:hover { background: #991b1b; color: #fff; }
-
-/* Category chips */
 QPushButton#chip {
-    background: #1a2336; color: #94a3b8;
-    border: 1px solid #33445f;
-    border-radius: 11px; padding: 5px 13px;
+    background: transparent; color: $muted;
+    border: 1px solid $border;
+    border-radius: 8px; padding: 5px 6px;
     font-size: 11px; font-weight: 600;
 }
-QPushButton#chip:hover { background: #232f47; color: #cbd5e1; }
+QPushButton#chip:hover { background: $hover; color: $text; }
 QPushButton#chip_active {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    color: #fff;
-    border: none;
-    border-radius: 11px; padding: 5px 13px;
-    font-size: 11px; font-weight: 800;
+    background: $accent_soft;
+    color: $accent_text;
+    border: 1px solid $accent;
+    border-radius: 8px; padding: 5px 6px;
+    font-size: 11px; font-weight: 700;
 }
 
-/* CheckBox */
-QCheckBox { color: #e8edf6; font-size: 13px; spacing: 8px; }
+QCheckBox { color: $text; font-size: 13px; spacing: 8px; }
 QCheckBox::indicator {
     width: 16px; height: 16px;
-    border: 1px solid #33445f;
+    border: 1px solid $border_strong;
     border-radius: 5px;
-    background: #141d30;
+    background: $bg;
 }
-QCheckBox::indicator:checked {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    border-color: #f59e0b;
-}
+QCheckBox::indicator:hover { border-color: $accent; }
+QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
 
-/* Table */
 QTableWidget {
-    background: #1a2336;
-    gridline-color: #263248;
-    border: 1px solid #2c374d;
-    border-radius: 14px;
-    color: #e8edf6;
-    alternate-background-color: #1e2840;
+    background: $bg;
+    gridline-color: $border;
+    border: 1px solid $border;
+    border-radius: 10px;
+    color: $text;
+    alternate-background-color: $raised;
 }
-QTableWidget::item:selected { background: #33290f; color: #fcd34d; }
+QTableWidget::item:selected { background: $accent_soft; color: $accent_text; }
 QHeaderView::section {
-    background: #222b40;
-    color: #94a3b8;
+    background: $raised;
+    color: $muted;
     padding: 8px 9px;
     border: none;
-    border-right: 1px solid #0f172a;
-    border-bottom: 1px solid #0f172a;
-    font-weight: 800;
+    border-bottom: 1px solid $border;
+    font-weight: 700;
     font-size: 11px;
-    letter-spacing: 0.06em;
 }
+QTableCornerButton::section { background: $raised; border: none; }
 
-/* Scrollbar */
-QScrollBar:vertical {
-    background: transparent; width: 7px; margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #3a4a66; border-radius: 3px; min-height: 24px;
-}
-QScrollBar::handle:vertical:hover { background: #f59e0b; }
+QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
+QScrollBar::handle:vertical { background: $scroll; border-radius: 3px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: $faint; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar:horizontal {
-    background: transparent; height: 7px; margin: 0;
-}
-QScrollBar::handle:horizontal {
-    background: #3a4a66; border-radius: 3px; min-width: 24px;
-}
-QScrollBar::handle:horizontal:hover { background: #f59e0b; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QScrollBar:horizontal { background: transparent; height: 8px; margin: 2px; }
+QScrollBar::handle:horizontal { background: $scroll; border-radius: 3px; min-width: 28px; }
+QScrollBar::handle:horizontal:hover { background: $faint; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
-/* Splitter */
-QSplitter::handle { background: #2c374d; }
+QSplitter::handle { background: $border; }
 
-/* Settings GroupBox — glass card */
 QGroupBox#settings_group {
-    border: 1px solid #2c374d;
-    border-radius: 14px;
-    margin-top: 8px;
-    padding-top: 8px;
-    background: #1a2336;
+    border: 1px solid $border;
+    border-radius: 12px;
+    margin-top: 14px;
+    padding-top: 10px;
+    background: $surface;
     font-size: 12px;
-    font-weight: 800;
-    color: #94a3b8;
+    font-weight: 700;
+    color: $muted;
 }
 QGroupBox#settings_group::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 14px; padding: 0 6px;
-    color: #fcd34d;
-}
-
-/* Progress bar */
-QProgressBar#analysis_progress {
-    background: #222b40;
-    border: none; border-radius: 3px;
-    max-height: 5px; min-height: 5px;
-}
-QProgressBar#analysis_progress::chunk {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    border-radius: 3px;
-}
-
-/* Frame separator */
-QFrame[frameShape="4"] { color: #2c374d; }
-            """)
-
-        def apply_styles_light(self):
-            self.setStyleSheet("""
-/* ── LIGHT THEME · "Aurum" premium fintech (gold + violet, soft glass) ──
-   Tokens: bg #f4f7fc · surface #ffffff · elevated #ffffff · border #e2e8f0
-     fg #0f172a · muted-fg #64748b · primary/gold #f59e0b · accent/violet #8b5cf6
-     danger #dc2626 · ring #f59e0b (2px focus). Soft shadows via layered borders. */
-
-QWidget {
-    background-color: #f4f7fc;
-    color: #0f172a;
-    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 13px;
-}
-QWidget:disabled { color: #94a3b8; }
-
-/* Adat-widgetek monospace-e — tabuláris számjegyek */
-QListWidget, QTextEdit, QTableWidget, QLineEdit, QTimeEdit,
-QLabel#stat_chip, QLabel#fng_chip {
-    font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'DejaVu Sans Mono', monospace;
-}
-
-QLabel { color: #0f172a; font-size: 13px; }
-QLabel#title_label { font-size: 17px; font-weight: 800; padding: 2px 0; color: #0f172a; letter-spacing: 0.01em; }
-QLabel#stat_chip {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #fff9ec, stop:1 #fef6e7);
-    border: 1px solid #f0cd7a;
-    border-radius: 11px; padding: 3px 11px;
-    font-size: 11px; color: #b45309; font-weight: 700;
-}
-QLabel#stat_chip_dim { font-size: 11px; color: #64748b; padding: 3px 4px; }
-QLabel#status_label  { font-size: 11px; color: #64748b; padding: 1px 4px; }
-QLabel#fng_chip {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-        stop:0 #fff9ec, stop:1 #fef6e7);
-    border: 1px solid #f0cd7a;
-    border-radius: 11px; padding: 3px 11px;
-    font-size: 11px; font-weight: 800; color: #b45309;
-}
-
-QScrollArea { border: none; background: transparent; }
-
-QListWidget, QTextEdit {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 6px;
-    color: #0f172a;
-    selection-background-color: #8b5cf6;
-    selection-color: #ffffff;
-    font-size: 12px;
-}
-QListWidget::item { padding: 6px 9px; border-radius: 8px; margin: 1px 0; }
-QListWidget::item:selected { background: #7c3aed; color: #fff; }
-QListWidget::item:hover:!selected { background: #eef2f9; }
-
-QLineEdit, QTimeEdit {
-    background: #ffffff;
-    color: #0f172a;
-    border: 1px solid #d5deea;
-    border-radius: 10px;
-    padding: 7px 11px;
-    font-size: 12px;
-    selection-background-color: #8b5cf6;
-    selection-color: #ffffff;
-}
-QLineEdit:focus, QTimeEdit:focus { border: 2px solid #f59e0b; }
-
-QComboBox {
-    background: #ffffff;
-    color: #0f172a;
-    border: 1px solid #d5deea;
-    border-radius: 10px;
-    padding: 6px 11px;
-}
-QComboBox:hover { border-color: #b0bccd; }
-QComboBox:focus { border: 2px solid #f59e0b; }
-QComboBox::drop-down { border: none; padding-right: 6px; }
-QComboBox QAbstractItemView {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    color: #0f172a;
-    padding: 4px;
-    selection-background-color: #8b5cf6;
-    selection-color: #ffffff;
-    outline: 0;
-}
-
-QComboBox#nav_combo {
-    background: #ffffff;
-    color: #0f172a;
-    border: 1px solid #d5deea;
-    border-radius: 12px;
-    padding: 8px 36px 8px 16px;
-    font-size: 13px; font-weight: 800;
-    min-height: 34px;
-}
-QComboBox#nav_combo:hover { border-color: #f59e0b; }
-QComboBox#nav_combo::drop-down { border: none; width: 30px; }
-QComboBox#nav_combo QAbstractItemView {
-    background: #ffffff; border: 1px solid #e2e8f0;
-    border-radius: 12px; color: #0f172a; padding: 5px;
-    selection-background-color: #f59e0b; selection-color: #ffffff; outline: 0;
-}
-QComboBox#nav_combo QAbstractItemView::item {
-    padding: 9px 16px; border-radius: 8px; min-height: 28px;
-}
-
-QPushButton {
-    background: #ffffff;
-    color: #334155;
-    border: 1px solid #d5deea;
-    border-radius: 10px;
-    padding: 7px 15px;
-    font-weight: 600; font-size: 12px;
-}
-QPushButton:hover { background: #eef2f9; border-color: #cbaf6a; color: #0f172a; }
-QPushButton:pressed { background: #e2e8f0; border-color: #f59e0b; color: #b45309; }
-QPushButton:focus { border: 2px solid #f59e0b; }
-
-QPushButton#primary_btn {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #15803d, stop:1 #22c55e);
-    color: #fff; border: none;
-    font-size: 13px; padding: 10px 24px;
-    border-radius: 12px; font-weight: 800;
-}
-QPushButton#primary_btn:hover {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #22c55e, stop:1 #4ade80);
-}
-QPushButton#primary_btn:pressed { background: #166534; }
-QPushButton#primary_btn:focus { border: 2px solid #16a34a; }
-
-QPushButton#live_btn {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #d97706, stop:1 #f59e0b);
-    color: #ffffff; border: none;
-    font-size: 13px; padding: 10px 24px;
-    border-radius: 12px; font-weight: 800;
-}
-QPushButton#live_btn:hover { background: #f59e0b; }
-QPushButton#live_btn:pressed { background: #b45309; }
-QPushButton#live_btn:focus { border: 2px solid #d97706; }
-
-QPushButton#live_btn_active {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #dc2626, stop:1 #ef4444);
-    color: #fff; border: none;
-    font-size: 13px; padding: 10px 24px;
-    border-radius: 12px; font-weight: 800;
-}
-QPushButton#live_btn_active:hover { background: #ef4444; }
-
-QPushButton#telegram_btn { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
-QPushButton#telegram_btn:hover { background: #2563eb; color: #fff; }
-
-QPushButton#discord_btn { background: #eef0ff; color: #4752c4; border-color: #c7ccff; }
-QPushButton#discord_btn:hover { background: #5865f2; color: #fff; }
-
-QPushButton#danger_btn { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
-QPushButton#danger_btn:hover { background: #dc2626; color: #fff; }
-
-QPushButton#chip {
-    background: #eef2f9; color: #64748b;
-    border: 1px solid #e2e8f0;
-    border-radius: 11px; padding: 5px 13px;
-    font-size: 11px; font-weight: 600;
-}
-QPushButton#chip:hover { background: #e2e8f0; color: #0f172a; }
-QPushButton#chip_active {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    color: #fff; border: none;
-    border-radius: 11px; padding: 5px 13px;
-    font-size: 11px; font-weight: 800;
-}
-
-QCheckBox { color: #0f172a; font-size: 13px; spacing: 8px; }
-QCheckBox::indicator {
-    width: 16px; height: 16px;
-    border: 1px solid #cbd5e1;
-    border-radius: 5px; background: #fff;
-}
-QCheckBox::indicator:checked {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    border-color: #f59e0b;
-}
-
-QTableWidget {
-    background: #ffffff; gridline-color: #eef2f7;
-    border: 1px solid #e2e8f0; border-radius: 14px;
-    color: #0f172a; alternate-background-color: #f8fafc;
-}
-QTableWidget::item:selected { background: #fef6e7; color: #b45309; }
-QHeaderView::section {
-    background: #f4f7fc; color: #64748b;
-    padding: 8px 9px; border: none;
-    border-right: 1px solid #eef2f7;
-    border-bottom: 1px solid #e2e8f0;
-    font-weight: 800; font-size: 11px;
-    letter-spacing: 0.06em;
-}
-
-QScrollBar:vertical { background: transparent; width: 7px; margin: 0; }
-QScrollBar::handle:vertical { background: #cbd5e1; border-radius: 3px; min-height: 24px; }
-QScrollBar::handle:vertical:hover { background: #f59e0b; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar:horizontal { background: transparent; height: 7px; margin: 0; }
-QScrollBar::handle:horizontal { background: #cbd5e1; border-radius: 3px; min-width: 24px; }
-QScrollBar::handle:horizontal:hover { background: #f59e0b; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-
-QSplitter::handle { background: #e2e8f0; }
-
-QGroupBox#settings_group {
-    border: 1px solid #e2e8f0;
-    border-radius: 14px; margin-top: 8px; padding-top: 8px;
-    background: #ffffff; font-size: 12px; font-weight: 800; color: #64748b;
-}
-QGroupBox#settings_group::title {
-    subcontrol-origin: margin; subcontrol-position: top left;
-    left: 14px; padding: 0 6px; color: #b45309;
+    left: 12px; padding: 0 6px;
+    color: $text;
 }
 
 QProgressBar#analysis_progress {
-    background: #e2e8f0; border: none; border-radius: 3px;
-    max-height: 5px; min-height: 5px;
+    background: $raised;
+    border: none; border-radius: 2px;
+    max-height: 4px; min-height: 4px;
 }
-QProgressBar#analysis_progress::chunk {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 #f59e0b, stop:1 #8b5cf6);
-    border-radius: 3px;
-}
+QProgressBar#analysis_progress::chunk { background: $accent; border-radius: 2px; }
 
-QFrame[frameShape="4"] { color: #e2e8f0; }
-            """)
+QFrame[frameShape="4"] { color: $border; }
+
+"""
+
+        def apply_styles(self):
+            from string import Template
+            tokens = self.THEME_TOKENS["light" if self._theme == "light" else "dark"]
+            self.setStyleSheet(Template(self.THEME_QSS).substitute(tokens))
 
         def _populate_currency_combo(self):
             """Feltölti a megjelenítési-valuta combót: Auto(HUF), USD, majd az
@@ -5593,7 +4916,7 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             idx = self.currency_combo.currentIndex()
             code = self.currency_combo.itemData(idx)
             if code in (None, "AUTO"):
-                return get_effective_rate()  # HUF-auto (hibánál USD-re esik vissza)
+                return get_effective_rate()
             if code == "USD":
                 return 1.0, "USD", "Kézi USD megjelenítés"
             return get_effective_rate(code)
@@ -5874,7 +5197,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 rate, currency, rate_warning = self.resolve_rate_currency()
                 fx_note = f" FX: {rate_warning}" if rate_warning else ""
 
-                # ---- Összehasonlítás mód (marad QChart vonaldiagramm) ----
                 if self.cb_compare_chart.isChecked():
                     self.candle_widget.setVisible(False)
                     self.chart_view.setVisible(True)
@@ -5954,7 +5276,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     )
                     return
 
-                # ---- Gyertyadiagram mód ----
                 self.candle_widget.setVisible(True)
                 self.chart_view.setVisible(False)
 
@@ -5970,20 +5291,17 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 snap = fetch_ohlc_series(symbol, rng, interval)
                 raw_candles = snap["candles"]
 
-                # Szorzó alkalmazása minden árra
                 candles = [
                     (ts, o * mult, h * mult, l * mult, c * mult)
                     for ts, o, h, l, c in raw_candles
                 ]
 
-                # Alakzatfelismerés
                 patterns = []
                 if self.cb_pattern_detect.isChecked() and len(candles) >= 10:
                     patterns = detect_patterns(raw_candles, mult=mult)
 
                 closes_disp = np.array([c[4] for c in candles], dtype=float)
 
-                # Bollinger-sávok overlay (valódi rajzolás a gyertyadiagramon)
                 bb_bands = None
                 bb_note = ""
                 if self.cb_bb_chart.isChecked() and len(candles) >= 21:
@@ -5993,7 +5311,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                         f" | BB(20,2σ): fel {up[-1]:,.2f}  közép {md[-1]:,.2f}  al {lo[-1]:,.2f} {currency}"
                     )
 
-                # Indikátor alpanel (RSI / MACD)
                 indicator = None
                 ind_idx = self.indicator_combo.currentIndex() if hasattr(self, "indicator_combo") else 0
                 if ind_idx == 1 and len(candles) >= 16:
@@ -6002,7 +5319,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     line, sig, hist = rolling_macd(closes_disp)
                     indicator = {"type": "macd", "line": line, "signal": sig, "hist": hist}
 
-                # X tengelycímkék generálása (max 8 db egyenletesen elosztva)
                 n = len(candles)
                 x_labels = []
                 fmt = _x_format(rng)
@@ -6026,7 +5342,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     bb_bands=bb_bands, indicator=indicator,
                 )
 
-                # Subtitle: alakzatösszefoglaló
                 if patterns:
                     pat_texts = "  |  ".join(
                         f"{p['emoji']} {p['label']}" for p in patterns
@@ -6061,11 +5376,9 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             """A bal panel alján lévő áttekintő összegzés frissítése."""
             if not hasattr(self, "summary_panel"):
                 return
-            dark = self._theme == "dark"
-            txt_col = "#cbd5e1" if dark else "#1e293b"
-            dim = "#64748b" if dark else "#94a3b8"
-            border = "#1e293b" if dark else "#e2e8f0"
-            bg = "#111827" if dark else "#ffffff"
+            tk = self.THEME_TOKENS["dark" if self._theme == "dark" else "light"]
+            txt_col = tk["text"]
+            dim = tk["muted"]
 
             sel = len(self.list_widget.selectedItems()) or len(ASSETS)
             rows = [f"<b style='font-size:12px'>📊 Áttekintés</b>",
@@ -6106,8 +5419,7 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
 
             body = "<br>".join(rows)
             self.summary_panel.setText(
-                f"<div style='border:1px solid {border};background:{bg};border-radius:10px;"
-                f"padding:8px 10px;font-size:11px;color:{txt_col};line-height:1.6'>{body}</div>"
+                f"<div style='font-size:12px;color:{txt_col};line-height:1.6'>{body}</div>"
             )
 
         def toggle_auto_clear(self, checked):
@@ -6317,7 +5629,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             self.telegram_bot_token = token.strip()
             self.telegram_chat_id = chat_id.strip()
             self.telegram_enabled = bool(self.telegram_bot_token and self.telegram_chat_id)
-            # Persist to disk so it survives restarts
             if self.telegram_bot_token or self.telegram_chat_id:
                 save_telegram_config(self.telegram_bot_token, self.telegram_chat_id)
             self.refresh_telegram_status()
@@ -6376,10 +5687,9 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 else:
                     failed += 1
                     self.log_alert(f"❌ Telegram küldési hiba ({result.get('name')}): {err}")
-                time.sleep(0.3)  # Telegram rate limit
+                time.sleep(0.3)
             self.log_alert(f"📊 Riport elküldve: {sent} sikeres, {failed} hibás.")
 
-        # ── Discord (webhook) ──────────────────────────────────────────────
         def refresh_discord_status(self):
             if self.discord_enabled and self.discord_webhook_url:
                 self.discord_status.setText(self.tr_("discord_active"))
@@ -6400,7 +5710,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 return
             self.discord_webhook_url = url.strip()
             self.discord_enabled = bool(self.discord_webhook_url)
-            # Mentés lemezre, hogy újraindítás után is megmaradjon
             save_discord_config(self.discord_webhook_url)
             self.refresh_discord_status()
             if self.discord_enabled:
@@ -6457,7 +5766,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 self.log_alert(f"❌ Discord fejléc hiba: {err}")
                 return
             sent, failed = 0, 0
-            # Discord max. 10 embed / üzenet → kötegelve küldjük
             embeds = [format_discord_result_embed(r, currency) for r in self._last_results]
             for i in range(0, len(embeds), 10):
                 batch = embeds[i:i + 10]
@@ -6467,7 +5775,7 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                 else:
                     failed += len(batch)
                     self.log_alert(f"❌ Discord küldési hiba: {err}")
-                time.sleep(0.5)  # Discord rate limit
+                time.sleep(0.5)
             self.log_alert(f"📊 Discord riport elküldve: {sent} sikeres, {failed} hibás.")
 
         def trigger_alert_channels(self, message):
@@ -6614,8 +5922,7 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             if self.auto_clear_analysis:
                 self.output.clear()
 
-            # switch to analysis tab so the user sees the output
-            self.nav_combo.setCurrentIndex(0)
+            self.nav_tabs.setCurrentIndex(0)
 
             manual_usd = self.currency_combo.currentIndex() == 1
             rate, currency, rate_warning = self.resolve_rate_currency()
@@ -6645,7 +5952,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
             for idx, (name, symbol) in enumerate(assets_to_run):
                 try:
                     result = analyze_asset(name, symbol, rate, currency)
-                    # inject holding qty if available
                     result["holding_qty"] = self.holdings.get(name, 0)
                     result["investment"] = evaluate_today_investment(
                         self.invest_amount, currency, has_huf, fx_ctx, result,
@@ -6744,7 +6050,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     self.analysis_info_label.setText(f"{idx + 1} / {total}")
                     QApplication.processEvents()
 
-            # Render all HTML cards at once
             wrapper_bg = "#0d1117" if dark else "#f6f8fa"
             self.output.setHtml(
                 f'<div style="background:{wrapper_bg};padding:4px">{"".join(html_parts)}</div>'
@@ -6771,7 +6076,6 @@ QFrame[frameShape="4"] { color: #e2e8f0; }
                     self.log_alert(f"SQLite mentési hiba: {e}")
             self.refresh_price_chart()
 
-
 def prompt_invest_amount(currency):
     if not sys.stdin.isatty():
         return None
@@ -6781,7 +6085,6 @@ def prompt_invest_amount(currency):
         return float(raw)
     except ValueError:
         return None
-
 
 def run_cli(selected_assets, invest_amount=None):
     rate, currency, rate_warning = get_effective_rate()
@@ -6817,7 +6120,6 @@ def run_cli(selected_assets, invest_amount=None):
             print(f"{name}: hiba — {e}")
             print("-" * 40)
     return 1 if had_error else 0
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="AI alapú eszközelemző (GUI + CLI).")
@@ -6872,14 +6174,12 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def resolve_selected_assets(args):
     if args.all:
         return list(ASSETS.items())
     if args.asset:
         return [(name, ASSETS[name]) for name in args.asset]
     return list(ASSETS.items())
-
 
 def main():
     configure_cross_platform_stdio()
@@ -6908,10 +6208,16 @@ def main():
         os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
     app = QApplication(sys.argv)
+    app.setApplicationName("AI Crypto Tracker")
+    app.setDesktopFileName("ai-crypto-tracker")
+    res_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    icon_path = res_dir / "assets" / "icon.png"
+    if icon_path.exists():
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(str(icon_path)))
     window = App()
     window.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

@@ -1,60 +1,42 @@
+# AI Crypto Tracker
 
-# 📊 AI-Powered Crypto & Stock Market Assistant
+Kripto-, tőzsdei, nyersanyag- és deviza-elemző asztali program: Yahoo Finance adatok,
+RSI/MACD/Bollinger, gyertyadiagram alakzatfelismeréssel, gépi tanulásos előrejelzés,
+Telegram/Discord értesítés és opcionális AI-kommentár (Claude / OpenAI).
 
-This project is an AI-driven market monitoring and advisory system designed to track cryptocurrencies and stocks in real time, analyze trends, and provide actionable investment insights.
+## Telepítés
 
-## 🚀 Features
-Real-Time Market Monitoring
-Continuously tracks price movements, volume, and market trends across major crypto assets and stock markets.
-AI-Based Analysis
-Utilizes machine learning models to identify patterns, detect anomalies, and generate data-driven investment suggestions.
-Investment Insights
-Provides buy/sell/hold recommendations based on technical indicators, historical data, and predictive analytics.
-Telegram Notifications
-Sends instant alerts via Telegram for significant market events, price changes, and AI-generated signals.
-Customizable Alerts
-Users can define thresholds, preferred assets, and notification frequency.
-Scalable Architecture
-Designed to integrate with multiple APIs and support additional financial instruments.
+### Linux
 
-## 🧠 How It Works
-Market data is collected from external APIs (crypto exchanges and stock market providers).
-The AI model processes the data and evaluates trends using technical and statistical indicators.
-Signals and insights are generated based on predefined strategies and learned patterns.
-Notifications are delivered to users via a Telegram bot in real time.
-
-## ⚙️ Tech Stack
-Python (or your preferred backend language)
-Machine Learning libraries (e.g., TensorFlow / PyTorch)
-Financial data APIs (e.g., Binance, Yahoo Finance)
-Telegram Bot API
-Database for historical data storage
-
-## ⚠️ Disclaimer
-
-This project is for educational and informational purposes only. It does not constitute financial advice. Always do your own research before making investment decisions.
-# 🤝 Help for the use: 
-1. Download the lates version or the raw file
-2. open terminal and paste this command 
 ```bash
-cd LOCATION WHERE YOU DOWNLOADED
+./telepites.sh
 ```
-```bash
-python ai-crypto-tracker.py
-```
-if you want to download as EXE
-```bash
-pip install pyinstaller
-```
-```bash
-cd LOCATION WHERE YOU DOWNLOADED
-```
-```bash
-pyinstaller --onefile --windowed --icon=crypto_icon.ico --add-data "crypto_icon.png;." ai-crypto-tracker.py
-```
-3. wait for the download ends
-4. open the folder "dist"
-5. run the EXE
-<img width="1272" height="654" alt="kép" src="https://github.com/user-attachments/assets/e4f26919-4a47-4ca7-8ae6-ee59e953d88a" />
 
-## AI website: https://botirocky.github.io/ai-cripto-tacker-webpage/
+- A programot a `~/.local/share/ai-crypto-tracker/` mappába másolja.
+- Menübejegyzést és ikont készít, és terminálból is indítható: `ai-crypto-tracker`.
+- Ha a rendszer Pythonjában megvan minden csomag (requests, numpy, scikit-learn,
+  PySide6), azt használja. Ha valami hiányzik, saját környezetet (venv) készít
+  és oda telepíti őket.
+- Eltávolítás: `./telepites.sh --eltavolitas`. A beállítások és az előzmények
+  (`~/.config/ai-cripto-tracker/`) ilyenkor megmaradnak.
+
+Frissítéshez elég újra futtatni a `./telepites.sh`-t.
+
+### Windows
+
+1. Telepítsd a Pythont (3.10 vagy újabb) és az [Inno Setup 6](https://jrsoftware.org/isdl.php)-ot.
+2. Futtasd a `build.bat`-ot.
+3. Az eredmény: `dist\AI-Crypto-Tracker-telepito.exe`. Ezzel bármelyik gépre
+   telepíthető, rendszergazdai jog nélkül.
+
+## Indítás forrásból
+
+```bash
+./run-tracker.sh            # grafikus felület
+./run-tracker.sh --cli      # parancssori elemzés
+```
+
+## Adatok helye
+
+Minden beállítás, előzmény és az élő mód CSV-je itt van:
+`~/.config/ai-cripto-tracker/` (Windowson: `%USERPROFILE%\.config\ai-cripto-tracker\`).
