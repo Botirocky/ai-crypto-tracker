@@ -4,6 +4,8 @@ Kripto-, tőzsdei, nyersanyag- és deviza-elemző asztali program: Yahoo Finance
 RSI/MACD/Bollinger, gyertyadiagram alakzatfelismeréssel, gépi tanulásos előrejelzés,
 Telegram/Discord értesítés és opcionális AI-kommentár (Claude / OpenAI).
 
+![AI Crypto Tracker – elemzés nézet](docs/screenshot.png)
+
 ## Telepítés
 
 ### Linux
