@@ -902,6 +902,34 @@ def http_post(url, timeout=REQUEST_TIMEOUT, **kwargs):
 
 _LAST_FX_RATES = {}
 
+def ttl_cache(seconds):
+    import functools
+    import threading
+
+    def deco(fn):
+        store = {}
+        lock = threading.Lock()
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            now = time.monotonic()
+            with lock:
+                hit = store.get(key)
+                if hit and now - hit[0] < seconds:
+                    return hit[1]
+            value = fn(*args, **kwargs)
+            if value is not None:
+                with lock:
+                    store[key] = (now, value)
+            return value
+
+        wrapper.cache_clear = store.clear
+        return wrapper
+
+    return deco
+
+@ttl_cache(300)
 def get_rate(currency="HUF", timeout=REQUEST_TIMEOUT, strict=True):
     """1 USD = ? a kért megjelenítési valutában (USD→currency)."""
     cur = (currency or "HUF").strip().upper()
@@ -972,6 +1000,7 @@ def yahoo_price_display_multiplier(symbol, rate, display_currency):
         return 1.0 / r if cur == "USD" else 1.0
     return r / huf
 
+@ttl_cache(300)
 def get_usdhuf_vs_ma20(timeout=REQUEST_TIMEOUT):
     """
     Napi USD/HUF: utolsó záró ár vs. 20 napos mozgóátlag (%).
@@ -1888,6 +1917,26 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
+def rsi_series(prices, period=14):
+    n = prices.size
+    out = np.full(n, 50.0)
+    if n < period + 1:
+        return out
+    deltas = np.diff(prices)
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+    for i in range(period, n):
+        if i > period:
+            avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
+        if avg_loss == 0:
+            out[i] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
+    return out
+
 def moving_average(prices, window=20):
     w = min(window, prices.size)
     return float(np.mean(prices[-w:]))
@@ -1911,6 +1960,9 @@ def build_features_and_labels(prices, volumes=None):
     X, y = [], []
     returns = np.diff(prices) / prices[:-1]
     lookback = 48
+    ema12_all = ema_np(prices, 12)
+    ema26_all = ema_np(prices, 26)
+    rsi_all = rsi_series(prices)
 
     for i in range(lookback, prices.size - 1):
         ret_1 = returns[i - 1]
@@ -1926,13 +1978,13 @@ def build_features_and_labels(prices, volumes=None):
         ma_ratio_10 = (prices[i] / ma_10) - 1.0
         ma_ratio_30 = (prices[i] / ma_30) - 1.0
 
-        ema_12 = float(ema_np(prices[: i + 1], 12)[-1])
-        ema_26 = float(ema_np(prices[: i + 1], 26)[-1])
+        ema_12 = float(ema12_all[i])
+        ema_26 = float(ema26_all[i])
         ema_ratio_12 = (prices[i] / ema_12) - 1.0 if ema_12 != 0 else 0.0
 
         macd_line_val = ema_12 - ema_26
-        prev_ema_12 = float(ema_np(prices[:i], 12)[-1]) if i >= 12 else ema_12
-        prev_ema_26 = float(ema_np(prices[:i], 26)[-1]) if i >= 26 else ema_26
+        prev_ema_12 = float(ema12_all[i - 1]) if i >= 12 else ema_12
+        prev_ema_26 = float(ema26_all[i - 1]) if i >= 26 else ema_26
         prev_macd = prev_ema_12 - prev_ema_26
         macd_accel = macd_line_val - prev_macd
 
@@ -1943,7 +1995,7 @@ def build_features_and_labels(prices, volumes=None):
         bb_width = bb_upper - bb_lower
         bb_pos = (prices[i] - bb_lower) / bb_width if bb_width > 0 else 0.5
 
-        rsi = calculate_rsi(prices[: i + 1]) / 100.0
+        rsi = rsi_all[i] / 100.0
 
         momentum = ret_1 - (returns[i - 4] if i >= 4 else 0.0)
 
@@ -2007,8 +2059,22 @@ FEATURE_NAMES = [
     "volume_ratio",
 ]
 
+ML_SETTINGS = {"rf_jobs": 4}
+_ML_THREAD = __import__("threading").local()
+
+def _limit_openmp_once():
+    if getattr(_ML_THREAD, "omp_limited", False):
+        return
+    _ML_THREAD.omp_limited = True
+    try:
+        from threadpoolctl import threadpool_limits
+        _ML_THREAD.limiter = threadpool_limits(limits=1, user_api="openmp")
+    except Exception:
+        pass
+
 def predict(prices, volumes=None):
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+    _limit_openmp_once()
     from sklearn.model_selection import train_test_split
 
     X, y = build_features_and_labels(prices, volumes=volumes)
@@ -2036,14 +2102,14 @@ def predict(prices, volumes=None):
         max_features="sqrt",
         min_samples_leaf=3,
         random_state=42,
+        n_jobs=ML_SETTINGS["rf_jobs"],
     )
     rf.fit(X_train, y_train)
 
-    gb = GradientBoostingClassifier(
-        n_estimators=150,
+    gb = HistGradientBoostingClassifier(
+        max_iter=150,
         learning_rate=0.05,
         max_depth=4,
-        subsample=0.8,
         random_state=42,
     )
     gb.fit(X_train, y_train)
@@ -5312,6 +5378,22 @@ if QT_AVAILABLE:
                 self.update_summary_panel()
 
         def run_quick_scanner(self):
+            if getattr(self, "_analysis_running", False):
+                return
+            self._analysis_running = True
+            self.btn.setEnabled(False)
+            self.btn_scanner.setEnabled(False)
+            try:
+                self._run_quick_scanner_impl()
+            finally:
+                self._analysis_running = False
+                self.btn.setEnabled(True)
+                self.btn_scanner.setEnabled(True)
+                self.progress_bar.setVisible(False)
+                if hasattr(self, "_shimmer"):
+                    self._shimmer.stop()
+
+        def _run_quick_scanner_impl(self):
             """Show a compact HTML table with signal for every selected asset."""
             rate, currency, _ = self.resolve_rate_currency()
             items = self.selected_asset_items()
@@ -5324,16 +5406,15 @@ if QT_AVAILABLE:
                 self._shimmer.start()
             QApplication.processEvents()
             total = len(items)
-            for i, (name, sym) in enumerate(items):
+            futures = self._run_parallel([(analyze_asset, (name, sym, rate, currency)) for name, sym in items])
+            for (name, sym), fut in zip(items, futures):
                 try:
-                    scan_results.append(analyze_asset(name, sym, rate, currency))
+                    scan_results.append(fut.result())
                 except Exception as e:
                     errors.append(
                         f'<div style="color:{pal["dim"]};padding:4px 4px">'
                         f'<b style="color:{pal["down"]}">{html.escape(name)}</b>: {html.escape(str(e))}</div>'
                     )
-                self.progress_bar.setValue(int((i + 1) / total * 100))
-                QApplication.processEvents()
             self.output.setHtml(
                 format_results_overview_html(scan_results, currency=currency, dark=dark) + "".join(errors)
             )
@@ -6696,7 +6777,84 @@ QFrame[frameShape="4"] { color: $border; }
                 return [(n, ASSETS[n]) for n in names if n in ASSETS]
             return list(ASSETS.items())
 
+        def _compute_asset(self, name, symbol, rate, currency, has_huf, fx_ctx):
+            ai_msg = None
+            result = analyze_asset(name, symbol, rate, currency)
+            result["holding_qty"] = self.holdings.get(name, 0)
+            result["investment"] = evaluate_today_investment(
+                self.invest_amount, currency, has_huf, fx_ctx, result,
+            )
+            if self.ai_commentary_enabled:
+                prov = self.ai_provider
+                ai_text, ai_err = None, None
+                if prov == "claude_cli":
+                    ai_text, ai_err = get_claude_cli_commentary(
+                        result, currency,
+                        model=self.claude_cli_model or None,
+                    )
+                elif prov == "claude" and self.claude_api_key:
+                    ai_text, ai_err = get_ai_commentary(
+                        result=result, currency=currency,
+                        api_key=None, model=self.ai_model,
+                        claude_api_key=self.claude_api_key,
+                        claude_model=self.claude_model,
+                    )
+                elif prov == "nvidia" and self.nvidia_api_key:
+                    ai_text, ai_err = get_nvidia_commentary(
+                        result, currency,
+                        api_key=self.nvidia_api_key, model=self.nvidia_model,
+                    )
+                elif prov == "openai" and self.ai_api_key:
+                    ai_text, ai_err = get_ai_commentary(
+                        result=result, currency=currency,
+                        api_key=self.ai_api_key, model=self.ai_model,
+                    )
+                else:
+                    ai_err = (
+                        f"Nincs beállítva API kulcs a(z) '{prov}' szolgáltatóhoz. "
+                        f"Nyisd meg az 'AI szolgáltató' beállítást és add meg a kulcsot."
+                    )
+                if ai_text:
+                    result["ai_commentary"] = ai_text
+                elif ai_err:
+                    ai_msg = f"AI ({prov}) hiba — {result.get('name')}: {ai_err}"
+            return result, ai_msg
+
+        def _run_parallel(self, jobs, max_workers=6):
+            import concurrent.futures as cf
+            total = len(jobs)
+            if not total:
+                return []
+            ML_SETTINGS["rf_jobs"] = 1 if total > 1 else 4
+            pool = cf.ThreadPoolExecutor(max_workers=max(1, min(max_workers, total)))
+            futures = [pool.submit(fn, *args) for fn, args in jobs]
+            pool.shutdown(wait=False)
+            while True:
+                done = sum(1 for f in futures if f.done())
+                self.progress_bar.setValue(int(done / total * 100))
+                self.analysis_info_label.setText(f"{done} / {total}")
+                if done >= total:
+                    return futures
+                QApplication.processEvents()
+                cf.wait(futures, timeout=0.05, return_when=cf.FIRST_COMPLETED)
+
         def run_analysis(self, prompt_amount=True):
+            if getattr(self, "_analysis_running", False):
+                return
+            self._analysis_running = True
+            self.btn.setEnabled(False)
+            self.btn_scanner.setEnabled(False)
+            try:
+                self._run_analysis_impl(prompt_amount)
+            finally:
+                self._analysis_running = False
+                self.btn.setEnabled(True)
+                self.btn_scanner.setEnabled(True)
+                self.progress_bar.setVisible(False)
+                if hasattr(self, "_shimmer"):
+                    self._shimmer.stop()
+
+        def _run_analysis_impl(self, prompt_amount=True):
             if self.auto_clear_analysis:
                 self.output.clear()
 
@@ -6727,47 +6885,16 @@ QFrame[frameShape="4"] { color: $border; }
             csv_rows = []
             db_batch = []
 
+            futures = self._run_parallel(
+                [(self._compute_asset, (name, symbol, rate, currency, has_huf, fx_ctx))
+                 for name, symbol in assets_to_run]
+            )
+
             for idx, (name, symbol) in enumerate(assets_to_run):
                 try:
-                    result = analyze_asset(name, symbol, rate, currency)
-                    result["holding_qty"] = self.holdings.get(name, 0)
-                    result["investment"] = evaluate_today_investment(
-                        self.invest_amount, currency, has_huf, fx_ctx, result,
-                    )
-                    if self.ai_commentary_enabled:
-                        prov = self.ai_provider
-                        ai_text, ai_err = None, None
-                        if prov == "claude_cli":
-                            ai_text, ai_err = get_claude_cli_commentary(
-                                result, currency,
-                                model=self.claude_cli_model or None,
-                            )
-                        elif prov == "claude" and self.claude_api_key:
-                            ai_text, ai_err = get_ai_commentary(
-                                result=result, currency=currency,
-                                api_key=None, model=self.ai_model,
-                                claude_api_key=self.claude_api_key,
-                                claude_model=self.claude_model,
-                            )
-                        elif prov == "nvidia" and self.nvidia_api_key:
-                            ai_text, ai_err = get_nvidia_commentary(
-                                result, currency,
-                                api_key=self.nvidia_api_key, model=self.nvidia_model,
-                            )
-                        elif prov == "openai" and self.ai_api_key:
-                            ai_text, ai_err = get_ai_commentary(
-                                result=result, currency=currency,
-                                api_key=self.ai_api_key, model=self.ai_model,
-                            )
-                        else:
-                            ai_err = (
-                                f"Nincs beállítva API kulcs a(z) '{prov}' szolgáltatóhoz. "
-                                f"Nyisd meg az 'AI szolgáltató' beállítást és add meg a kulcsot."
-                            )
-                        if ai_text:
-                            result["ai_commentary"] = ai_text
-                        elif ai_err:
-                            self.log_alert(f"AI ({prov}) hiba — {result.get('name')}: {ai_err}")
+                    result, ai_msg = futures[idx].result()
+                    if ai_msg:
+                        self.log_alert(ai_msg)
                     results.append(result)
                     for msg in fire_custom_rules_if_needed(
                         self.custom_rules, result, self._rule_cooldown
@@ -6823,10 +6950,6 @@ QFrame[frameShape="4"] { color: $border; }
                         f'<br><span style="font-size:10px;color:{dim}">'
                         f'{html.escape(err_detail[:400])}</span></div>'
                     )
-                finally:
-                    self.progress_bar.setValue(int((idx + 1) / total * 100))
-                    self.analysis_info_label.setText(f"{idx + 1} / {total}")
-                    QApplication.processEvents()
 
             overview = format_results_overview_html(results, currency=currency, dark=dark) if len(results) > 1 else ""
             self.output.setHtml(f'<div style="padding:2px">{overview}{"".join(html_parts)}</div>')
