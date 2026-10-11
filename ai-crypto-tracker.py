@@ -53,7 +53,7 @@ try:
     from PySide6.QtCore import (
         QTimer, QDateTime, Qt, QTime,
         QPropertyAnimation, QEasingCurve, QPoint, QRect,
-        QVariantAnimation,
+        QVariantAnimation, QObject, Signal, QUrl,
     )
     from PySide6.QtWidgets import (
         QApplication,
@@ -83,6 +83,7 @@ try:
         QGraphicsDropShadowEffect,
         QGraphicsOpacityEffect,
         QSizePolicy,
+        QStyledItemDelegate,
     )
     from PySide6.QtGui import (
         QShortcut, QKeySequence,
@@ -94,63 +95,34 @@ try:
     QT_AVAILABLE = True
     QT_IMPORT_ERROR = None
 
+    class UpdateNotifier(QObject):
+        done = Signal(object)
+
     class AnimatedButton(QPushButton):
-        """QPushButton with hover-glow + press-bounce via shadow animation."""
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._shadow = QGraphicsDropShadowEffect(self)
-            self._shadow.setBlurRadius(0)
-            self._shadow.setColor(QColor(99, 102, 241, 200))
-            self._shadow.setOffset(0, 0)
-            self.setGraphicsEffect(self._shadow)
-            self._anim = QPropertyAnimation(self._shadow, b"blurRadius")
-            self._anim.setDuration(180)
-            self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        def _glow_to(self, val):
-            self._anim.stop()
-            self._anim.setStartValue(int(self._shadow.blurRadius()))
-            self._anim.setEndValue(val)
-            self._anim.start()
-
         def set_glow_color(self, r, g, b):
-            self._shadow.setColor(QColor(r, g, b, 200))
-
-        def enterEvent(self, e):
-            self._glow_to(20)
-            super().enterEvent(e)
-
-        def leaveEvent(self, e):
-            self._glow_to(0)
-            super().leaveEvent(e)
-
-        def mousePressEvent(self, e):
-            self._shadow.setBlurRadius(30)
-            super().mousePressEvent(e)
-
-        def mouseReleaseEvent(self, e):
-            self._glow_to(20)
-            super().mouseReleaseEvent(e)
+            pass
 
     class PulsingDot(QWidget):
-        """Animated pulsing status indicator dot."""
-
         def __init__(self, parent=None):
             super().__init__(parent)
-            self.setFixedSize(14, 14)
+            self.setFixedSize(12, 12)
             self._active = False
             self._pulse = 0.0
             self._dir = 1
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
-            self._timer.start(28)
 
         def set_active(self, active: bool):
             self._active = active
+            if active:
+                self._timer.start(40)
+            else:
+                self._timer.stop()
+                self._pulse = 0.0
             self.update()
 
         def _tick(self):
-            self._pulse += 0.055 * self._dir
+            self._pulse += 0.05 * self._dir
             if self._pulse >= 1.0:
                 self._pulse = 1.0
                 self._dir = -1
@@ -162,20 +134,58 @@ try:
         def paintEvent(self, _event):
             p = QPainter(self)
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            cx = cy = 7
-            if self._active:
-                core = QColor(34, 197, 94)
-            else:
-                core = QColor(239, 68, 68)
-            ring = QColor(core.red(), core.green(), core.blue(),
-                          int(70 * self._pulse))
-            ring_r = int(5 + self._pulse * 4)
+            c = QPoint(6, 6)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(ring)
-            p.drawEllipse(QPoint(cx, cy), ring_r, ring_r)
+            if self._active:
+                core = QColor(22, 199, 132)
+                p.setBrush(QColor(core.red(), core.green(), core.blue(), int(80 * self._pulse)))
+                r = int(3 + self._pulse * 3)
+                p.drawEllipse(c, r, r)
+            else:
+                core = QColor(120, 128, 142)
             p.setBrush(core)
-            p.drawEllipse(QPoint(cx, cy), 4, 4)
+            p.drawEllipse(c, 3, 3)
             p.end()
+
+    class KpiBlock(QFrame):
+        def __init__(self, caption="", parent=None):
+            super().__init__(parent)
+            self.setObjectName("kpi")
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(14, 0, 10, 0)
+            lay.setSpacing(1)
+            self.caption = QLabel(caption)
+            self.caption.setObjectName("kpi_caption")
+            self.value = QLabel("–")
+            self.value.setObjectName("kpi_value")
+            self.value.setTextFormat(Qt.TextFormat.RichText)
+            lay.addWidget(self.caption)
+            lay.addWidget(self.value)
+
+    class AssetItemDelegate(QStyledItemDelegate):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.muted = QColor("#8b93a1")
+            self.favorites = set()
+
+        def paint(self, painter, option, index):
+            super().paint(painter, option, index)
+            name = index.data()
+            sym = ASSETS.get(name, "")
+            if sym.endswith("-USD"):
+                sym = sym[:-4]
+            if name in self.favorites:
+                sym = "★  " + sym
+            if not sym:
+                return
+            painter.save()
+            f = QFont(option.font)
+            f.setPointSizeF(max(7.0, f.pointSizeF() * 0.85))
+            painter.setFont(f)
+            painter.setPen(self.muted)
+            r = option.rect.adjusted(0, 0, -12, 0)
+            painter.drawText(r, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), sym)
+            painter.restore()
 
     class ShimmerBar(QWidget):
         """Animated gradient shimmer loading bar."""
@@ -447,6 +457,8 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-4-6"
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_MODEL_DEFAULT = "meta/llama-3.3-70b-instruct"
+APP_VERSION = "2.0.0"
+UPDATE_REPO = "Botirocky/ai-crypto-tracker"
 REQUEST_TIMEOUT = 15
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; AssetTracker/1.0)",
@@ -465,22 +477,28 @@ _current_lang = "hu"
 
 TRANSLATIONS = {
     "hu": {
-        "window_title": "AI Eszközelemző Pro",
-        "title_label": "AI + Indikátor Elemző Pro",
+        "window_title": "AI Crypto Tracker",
+        "title_label": "AI Crypto Tracker",
         "search_placeholder": "Keresés eszköz névre…",
         "only_favorites": "Csak kedvencek",
-        "fav_toggle": "Kedvenc ☆ váltás",
+        "fav_toggle": "Kedvenc váltás",
         "display_label": "Megjelenítés:",
         "currency_auto": "Auto (HUF ha elérhető)",
         "currency_usd": "Mindig USD",
         "selected": "Kiválasztva: {n}",
         "signals": "Jelzések: Vétel {b} | Eladás {s} | Várj {w}",
         "last_update_init": "Utolsó frissítés: -",
+        "app_subtitle": "Piaci elemzés és előrejelzés",
+        "kpi_selected": "KIJELÖLVE",
+        "kpi_signals": "VÉTEL · ELADÁS · VÁRJ",
+        "kpi_fng": "FEAR & GREED",
+        "last_update": "Utolsó frissítés: {t}",
+        "kpi_assets_unit": "eszköz",
         "select_all": "Összes kijelölése",
         "clear_output": "Kimenet törlése",
         "set_amount": "Összeg beállítása",
         "tab_analysis": "Elemzés",
-        "tab_chart": "📈 Árfolyam diagram",
+        "tab_chart": "Árfolyam diagram",
         "tab_alerts": "Értesítések",
         "tab_portfolio": "Portfolio",
         "tab_correlation": "Korreláció",
@@ -489,10 +507,10 @@ TRANSLATIONS = {
         "tab_settings": "Beállítások",
         "copy_output": "Kimenet vágólapra",
         "analysis_placeholder": "Az elemzés eredménye itt fog megjelenni...",
-        "btn_run": "▶  Elemzés",
-        "btn_live_start": "📡  Élő mód indítása",
-        "btn_live_stop": "⏹  Élő mód leállítása",
-        "btn_interval": "⏱  Időköz: {n}s",
+        "btn_run": "Elemzés",
+        "btn_live_start": "Élő mód indítása",
+        "btn_live_stop": "Élő mód leállítása",
+        "btn_interval": "Időköz: {n}s",
         "live_off": "Élő mód: kikapcsolva",
         "live_on": "Élő mód: fut ({n}s)",
         "auto_clear": "Elemzés törlése minden frissítés előtt",
@@ -500,17 +518,17 @@ TRANSLATIONS = {
         "csv_autosave": "CSV automatikus mentés élőben",
         "csv_btn": "CSV fájl: {name}",
         "alert_threshold_btn": "Riasztási küszöb: {v:.2f}%",
-        "telegram_config": "⚙️  Telegram beállítás (token + chat ID)",
-        "telegram_test": "📨  Telegram tesztüzenet",
-        "telegram_report": "📊  Riport küldése Telegramra",
-        "telegram_off": "📵  Telegram: kikapcsolva",
-        "telegram_active": "🟢  Telegram: aktív (chat: {id})",
-        "telegram_partial": "🟡  Telegram: részben beállítva",
-        "discord_config": "⚙️  Discord beállítás (webhook URL)",
-        "discord_test": "📨  Discord tesztüzenet",
-        "discord_report": "📊  Riport küldése Discordra",
-        "discord_off": "📵  Discord: kikapcsolva",
-        "discord_active": "🟢  Discord: aktív",
+        "telegram_config": "Telegram beállítás (token + chat ID)",
+        "telegram_test": "Telegram tesztüzenet",
+        "telegram_report": "Riport küldése Telegramra",
+        "telegram_off": "Telegram: kikapcsolva",
+        "telegram_active": "Telegram: aktív (chat: {id})",
+        "telegram_partial": "Telegram: részben beállítva",
+        "discord_config": "Discord beállítás (webhook URL)",
+        "discord_test": "Discord tesztüzenet",
+        "discord_report": "Riport küldése Discordra",
+        "discord_off": "Discord: kikapcsolva",
+        "discord_active": "Discord: aktív",
         "ai_checkbox": "Felhő AI magyarázat engedélyezve",
         "ai_config_btn": "AI beállítás (API kulcs + modell)",
         "ai_off": "AI: kikapcsolva",
@@ -582,28 +600,34 @@ TRANSLATIONS = {
         "side_long": "LONG",
         "side_short": "SHORT",
         "side_neutral": "NEUTRAL",
-        "quick_scanner_btn": "⚡ Gyors scanner",
-        "edit_holdings_btn": "✏️  Mennyiségek szerkesztése",
-        "refresh_portfolio_btn": "🔄  Frissítés",
+        "quick_scanner_btn": "Gyors scanner",
+        "edit_holdings_btn": "Mennyiségek szerkesztése",
+        "refresh_portfolio_btn": "Frissítés",
         "portfolio_headers": ["Eszköz", "Mennyiség", "Jelenlegi ár", "Érték", "Napi %", "Döntés"],
     },
     "en": {
-        "window_title": "AI Asset Analyzer Pro",
-        "title_label": "AI + Indicator Analyzer Pro",
+        "window_title": "AI Crypto Tracker",
+        "title_label": "AI Crypto Tracker",
         "search_placeholder": "Search by asset name…",
         "only_favorites": "Favorites only",
-        "fav_toggle": "Favorite ☆ toggle",
+        "fav_toggle": "Favorite toggle",
         "display_label": "Display:",
         "currency_auto": "Auto (HUF if available)",
         "currency_usd": "Always USD",
         "selected": "Selected: {n}",
         "signals": "Signals: Buy {b} | Sell {s} | Wait {w}",
         "last_update_init": "Last update: -",
+        "app_subtitle": "Market analysis and forecasting",
+        "kpi_selected": "SELECTED",
+        "kpi_signals": "BUY · SELL · WAIT",
+        "kpi_fng": "FEAR & GREED",
+        "last_update": "Last update: {t}",
+        "kpi_assets_unit": "assets",
         "select_all": "Select all",
         "clear_output": "Clear output",
         "set_amount": "Set amount",
         "tab_analysis": "Analysis",
-        "tab_chart": "📈 Price chart",
+        "tab_chart": "Price chart",
         "tab_alerts": "Alerts",
         "tab_portfolio": "Portfolio",
         "tab_correlation": "Correlation",
@@ -612,10 +636,10 @@ TRANSLATIONS = {
         "tab_settings": "Settings",
         "copy_output": "Copy output",
         "analysis_placeholder": "Analysis results will appear here...",
-        "btn_run": "▶  Analyze",
-        "btn_live_start": "📡  Start live mode",
-        "btn_live_stop": "⏹  Stop live mode",
-        "btn_interval": "⏱  Interval: {n}s",
+        "btn_run": "Analyze",
+        "btn_live_start": "Start live mode",
+        "btn_live_stop": "Stop live mode",
+        "btn_interval": "Interval: {n}s",
         "live_off": "Live mode: off",
         "live_on": "Live mode: running ({n}s)",
         "auto_clear": "Clear analysis before each refresh",
@@ -623,17 +647,17 @@ TRANSLATIONS = {
         "csv_autosave": "CSV auto-save in live mode",
         "csv_btn": "CSV file: {name}",
         "alert_threshold_btn": "Alert threshold: {v:.2f}%",
-        "telegram_config": "⚙️  Telegram settings (token + chat ID)",
-        "telegram_test": "📨  Telegram test message",
-        "telegram_report": "📊  Send report to Telegram",
-        "telegram_off": "📵  Telegram: disabled",
-        "telegram_active": "🟢  Telegram: active (chat: {id})",
-        "telegram_partial": "🟡  Telegram: partially configured",
-        "discord_config": "⚙️  Discord settings (webhook URL)",
-        "discord_test": "📨  Discord test message",
-        "discord_report": "📊  Send report to Discord",
-        "discord_off": "📵  Discord: disabled",
-        "discord_active": "🟢  Discord: active",
+        "telegram_config": "Telegram settings (token + chat ID)",
+        "telegram_test": "Telegram test message",
+        "telegram_report": "Send report to Telegram",
+        "telegram_off": "Telegram: disabled",
+        "telegram_active": "Telegram: active (chat: {id})",
+        "telegram_partial": "Telegram: partially configured",
+        "discord_config": "Discord settings (webhook URL)",
+        "discord_test": "Discord test message",
+        "discord_report": "Send report to Discord",
+        "discord_off": "Discord: disabled",
+        "discord_active": "Discord: active",
         "ai_checkbox": "Cloud AI commentary enabled",
         "ai_config_btn": "AI settings (API key + model)",
         "ai_off": "AI: disabled",
@@ -705,28 +729,34 @@ TRANSLATIONS = {
         "side_long": "LONG",
         "side_short": "SHORT",
         "side_neutral": "NEUTRAL",
-        "quick_scanner_btn": "⚡ Quick scanner",
-        "edit_holdings_btn": "✏️  Edit holdings",
-        "refresh_portfolio_btn": "🔄  Refresh",
+        "quick_scanner_btn": "Quick scanner",
+        "edit_holdings_btn": "Edit holdings",
+        "refresh_portfolio_btn": "Refresh",
         "portfolio_headers": ["Asset", "Qty", "Current price", "Value", "Daily %", "Decision"],
     },
     "de": {
-        "window_title": "KI-Asset-Analyzer Pro",
-        "title_label": "KI + Indikator-Analyzer Pro",
+        "window_title": "AI Crypto Tracker",
+        "title_label": "AI Crypto Tracker",
         "search_placeholder": "Asset-Name suchen…",
         "only_favorites": "Nur Favoriten",
-        "fav_toggle": "Favorit ☆ umschalten",
+        "fav_toggle": "Favorit umschalten",
         "display_label": "Anzeige:",
         "currency_auto": "Auto (HUF wenn verfügbar)",
         "currency_usd": "Immer USD",
         "selected": "Ausgewählt: {n}",
         "signals": "Signale: Kauf {b} | Verkauf {s} | Warten {w}",
         "last_update_init": "Letzte Aktualisierung: -",
+        "app_subtitle": "Marktanalyse und Prognose",
+        "kpi_selected": "AUSGEWÄHLT",
+        "kpi_signals": "KAUF · VERKAUF · WARTEN",
+        "kpi_fng": "FEAR & GREED",
+        "last_update": "Letzte Aktualisierung: {t}",
+        "kpi_assets_unit": "Assets",
         "select_all": "Alle auswählen",
         "clear_output": "Ausgabe löschen",
         "set_amount": "Betrag festlegen",
         "tab_analysis": "Analyse",
-        "tab_chart": "📈 Kurschart",
+        "tab_chart": "Kurschart",
         "tab_alerts": "Benachrichtigungen",
         "tab_portfolio": "Portfolio",
         "tab_correlation": "Korrelation",
@@ -735,10 +765,10 @@ TRANSLATIONS = {
         "tab_settings": "Einstellungen",
         "copy_output": "Ausgabe kopieren",
         "analysis_placeholder": "Analyseergebnisse erscheinen hier...",
-        "btn_run": "▶  Analysieren",
-        "btn_live_start": "📡  Live-Modus starten",
-        "btn_live_stop": "⏹  Live-Modus stoppen",
-        "btn_interval": "⏱  Intervall: {n}s",
+        "btn_run": "Analysieren",
+        "btn_live_start": "Live-Modus starten",
+        "btn_live_stop": "Live-Modus stoppen",
+        "btn_interval": "Intervall: {n}s",
         "live_off": "Live-Modus: aus",
         "live_on": "Live-Modus: läuft ({n}s)",
         "auto_clear": "Analyse vor jeder Aktualisierung löschen",
@@ -746,17 +776,17 @@ TRANSLATIONS = {
         "csv_autosave": "CSV-Autospeicherung im Live-Modus",
         "csv_btn": "CSV-Datei: {name}",
         "alert_threshold_btn": "Alarmschwelle: {v:.2f}%",
-        "telegram_config": "⚙️  Telegram-Einstellungen (Token + Chat-ID)",
-        "telegram_test": "📨  Telegram-Testnachricht",
-        "telegram_report": "📊  Bericht an Telegram senden",
-        "telegram_off": "📵  Telegram: deaktiviert",
-        "telegram_active": "🟢  Telegram: aktiv (Chat: {id})",
-        "telegram_partial": "🟡  Telegram: teilweise konfiguriert",
-        "discord_config": "⚙️  Discord-Einstellungen (Webhook-URL)",
-        "discord_test": "📨  Discord-Testnachricht",
-        "discord_report": "📊  Bericht an Discord senden",
-        "discord_off": "📵  Discord: deaktiviert",
-        "discord_active": "🟢  Discord: aktiv",
+        "telegram_config": "Telegram-Einstellungen (Token + Chat-ID)",
+        "telegram_test": "Telegram-Testnachricht",
+        "telegram_report": "Bericht an Telegram senden",
+        "telegram_off": "Telegram: deaktiviert",
+        "telegram_active": "Telegram: aktiv (Chat: {id})",
+        "telegram_partial": "Telegram: teilweise konfiguriert",
+        "discord_config": "Discord-Einstellungen (Webhook-URL)",
+        "discord_test": "Discord-Testnachricht",
+        "discord_report": "Bericht an Discord senden",
+        "discord_off": "Discord: deaktiviert",
+        "discord_active": "Discord: aktiv",
         "ai_checkbox": "Cloud-KI-Kommentar aktiviert",
         "ai_config_btn": "KI-Einstellungen (API-Schlüssel + Modell)",
         "ai_off": "KI: deaktiviert",
@@ -828,9 +858,9 @@ TRANSLATIONS = {
         "side_long": "LONG",
         "side_short": "SHORT",
         "side_neutral": "NEUTRAL",
-        "quick_scanner_btn": "⚡ Schnellscanner",
-        "edit_holdings_btn": "✏️  Bestände bearbeiten",
-        "refresh_portfolio_btn": "🔄  Aktualisieren",
+        "quick_scanner_btn": "Schnellscanner",
+        "edit_holdings_btn": "Bestände bearbeiten",
+        "refresh_portfolio_btn": "Aktualisieren",
         "portfolio_headers": ["Asset", "Menge", "Aktueller Kurs", "Wert", "Tägl. %", "Entscheidung"],
     },
 }
@@ -1001,7 +1031,7 @@ def get_asset(symbol, timeout=REQUEST_TIMEOUT):
     volumes = np.array(pv, dtype=float)
     if prices.size < 2:
         raise ValueError(f"Túl kevés érvényes ár: {symbol}")
-    meta = result.get("meta") or {}
+    meta = _annotate_previous_close(result, result.get("meta") or {})
     native_open_fallback = None
     if meta.get("regularMarketOpen") is None:
         native_open_fallback = infer_session_open_native_from_chart(result)
@@ -1035,7 +1065,7 @@ def fetch_chart_series(symbol, range_param="1d", interval_param="5m", timeout=RE
             points.append((int(t) * 1000, float(c)))
     if len(points) < 2:
         raise ValueError(f"Túl kevés diagram pont: {symbol}")
-    meta = result.get("meta") or {}
+    meta = _annotate_previous_close(result, result.get("meta") or {})
     native_open_fb = None
     if meta.get("regularMarketOpen") is None:
         native_open_fb = infer_session_open_native_from_chart(result)
@@ -1077,7 +1107,7 @@ def fetch_ohlc_series(symbol, range_param="1d", interval_param="5m", timeout=REQ
         candles.append((int(t) * 1000, float(o), float(h), float(l), float(c)))
     if len(candles) < 2:
         raise ValueError(f"Túl kevés érvényes gyertya: {symbol}")
-    meta = result.get("meta") or {}
+    meta = _annotate_previous_close(result, result.get("meta") or {})
     native_open_fb = None
     if meta.get("regularMarketOpen") is None:
         native_open_fb = infer_session_open_native_from_chart(result)
@@ -1105,6 +1135,37 @@ def regular_market_change_pct(meta):
 
 def _utc_date_from_ts(tsec):
     return datetime.fromtimestamp(int(tsec), tz=timezone.utc).date()
+
+def infer_previous_close_native_from_chart(chart_result):
+    ts = chart_result.get("timestamp") or []
+    quotes = (chart_result.get("indicators") or {}).get("quote") or []
+    if not quotes or not ts:
+        return None
+    closes = quotes[0].get("close") or []
+    if len(closes) != len(ts):
+        return None
+    i = len(ts) - 1
+    while i >= 0 and closes[i] is None:
+        i -= 1
+    if i < 0:
+        return None
+    last_day = _utc_date_from_ts(ts[i])
+    j = i - 1
+    while j >= 0:
+        if closes[j] is not None and _utc_date_from_ts(ts[j]) != last_day:
+            try:
+                return float(closes[j])
+            except (TypeError, ValueError):
+                return None
+        j -= 1
+    return None
+
+def _annotate_previous_close(chart_result, meta):
+    pc = infer_previous_close_native_from_chart(chart_result)
+    if pc is not None:
+        meta["previousClose"] = pc
+        meta["chartPreviousClose"] = pc
+    return meta
 
 def infer_session_open_native_from_chart(chart_result):
     """
@@ -1162,6 +1223,117 @@ def meta_session_open_previous_close(meta, multiplier, native_open_fallback=None
 
 def ensure_app_state_dir():
     APP_STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _version_tuple(text):
+    import re
+    m = re.search(r"\d+(?:\.\d+)*", str(text or ""))
+    if not m:
+        return None
+    parts = [int(x) for x in m.group(0).split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:4])
+
+def release_version(release):
+    for key in ("tag_name", "name"):
+        v = _version_tuple(release.get(key))
+        if v:
+            return v
+    return None
+
+def fetch_latest_release(repo=UPDATE_REPO, timeout=10):
+    r = requests.get(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        timeout=timeout,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "ai-crypto-tracker-updater"},
+    )
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+def check_for_update(repo=UPDATE_REPO):
+    rel = fetch_latest_release(repo)
+    if not rel:
+        return False, None, ""
+    latest = release_version(rel)
+    current = _version_tuple(APP_VERSION)
+    label = ("v" + ".".join(str(x) for x in latest[:3])) if latest else (rel.get("tag_name") or rel.get("name") or "")
+    return bool(latest and current and latest > current), rel, label
+
+SCRIPT_NAMES = ("ai-crypto-tracker.py", "ai-cripto-tracker.py")
+
+def install_mode():
+    if getattr(sys, "frozen", False):
+        return "frozen"
+    if (Path(__file__).resolve().parent / ".git").exists():
+        return "git"
+    return "source"
+
+def _validate_script(data):
+    if len(data) < 50_000:
+        raise ValueError("A letöltött program gyanúsan kicsi.")
+    text = data.decode("utf-8")
+    if "class App(" not in text or "def main(" not in text:
+        raise ValueError("A letöltött fájl nem az AI Crypto Tracker programja.")
+    compile(text, "ai-crypto-tracker.py", "exec")
+    return text
+
+def _download(url, timeout=60):
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "ai-crypto-tracker-updater"})
+    r.raise_for_status()
+    return r.content
+
+def apply_source_update(release):
+    import io
+    import zipfile
+    target = Path(__file__).resolve()
+    app_dir = target.parent
+    assets = {}
+    script = None
+    for a in release.get("assets") or []:
+        if a.get("name") in SCRIPT_NAMES:
+            script = _download(a["browser_download_url"])
+            break
+    if script is None:
+        zball = release.get("zipball_url")
+        if not zball:
+            raise ValueError("A kiadásban nincs letölthető program.")
+        with zipfile.ZipFile(io.BytesIO(_download(zball, timeout=120))) as zf:
+            for name in zf.namelist():
+                parts = name.split("/", 1)
+                if len(parts) != 2 or ".." in parts[1]:
+                    continue
+                rel = parts[1]
+                if rel in SCRIPT_NAMES:
+                    script = zf.read(name)
+                elif rel.startswith("assets/") and rel.split("/")[-1] in ("icon.png", "icon.svg", "icon.ico"):
+                    assets[rel] = zf.read(name)
+        if script is None:
+            raise ValueError("A forráscsomagban nincs ai-crypto-tracker.py.")
+    _validate_script(script)
+    backup_dir = APP_STATE_DIR / "backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"ai-crypto-tracker-{APP_VERSION}.py"
+    shutil.copy2(target, backup)
+    tmp = target.with_suffix(".py.uj")
+    tmp.write_bytes(script)
+    os.replace(tmp, target)
+    for rel, data in assets.items():
+        dest = app_dir / rel
+        if dest.parent.is_dir():
+            try:
+                dest.write_bytes(data)
+            except OSError:
+                pass
+    return backup
+
+def find_installer_asset(release):
+    for a in release.get("assets") or []:
+        n = (a.get("name") or "").lower()
+        if n.endswith(".exe") and ("telepito" in n or "setup" in n):
+            return a
+    return None
 
 def load_favorites():
     ensure_app_state_dir()
@@ -2158,7 +2330,7 @@ def format_telegram_alert(message, asset_name=""):
         header = "⚠️ <b>Árfolyam riasztás</b>\n"
     return header + html.escape(message)
 
-DISCORD_USERNAME = "AI Eszközelemző Pro"
+DISCORD_USERNAME = "AI Crypto Tracker"
 DISCORD_COLOR_BUY = 0x23E87A
 DISCORD_COLOR_SELL = 0xFF5D73
 DISCORD_COLOR_WAIT = 0xFFCB45
@@ -2252,7 +2424,7 @@ def format_discord_result_embed(result, currency="HUF"):
         "description": f"**Döntés:** {decision}",
         "color": color,
         "fields": fields,
-        "footer": {"text": "AI Eszközelemző Pro"},
+        "footer": {"text": "AI Crypto Tracker"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2263,7 +2435,7 @@ def format_discord_alert_embed(message, asset_name=""):
         "title": title,
         "description": str(message)[:4096],
         "color": DISCORD_COLOR_WAIT,
-        "footer": {"text": "AI Eszközelemző Pro"},
+        "footer": {"text": "AI Crypto Tracker"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2860,12 +3032,80 @@ def detect_ma_cross(prices):
             return {"type": "death_cross", "fast": ma50, "slow": ma20, "fast_n": 50, "slow_n": 20}
     return None
 
-def _sig_colors(decision, dark=True):
+def _report_palette(dark=True):
+    if dark:
+        return {"card": "#12161d", "head": "#171c25", "text": "#e4e7ec", "dim": "#8b93a1",
+                "border": "#222936", "up": "#16c784", "down": "#ea3943", "warn": "#e0a43a",
+                "info": "#8fb0ff", "page": "#0d1015"}
+    return {"card": "#ffffff", "head": "#f8f9fb", "text": "#111622", "dim": "#5a6373",
+            "border": "#e1e4ea", "up": "#0e9f6e", "down": "#d92d3a", "warn": "#b7791f",
+            "info": "#1d4cc0", "page": "#f5f6f8"}
+
+def _decision_kind(decision):
     if "📈" in decision:
-        return "#22c55e", "#0f2d1f" if dark else "#f0fdf4", "#22c55e"
+        return "buy"
     if "⚠️" in decision:
-        return "#ef4444", "#2d0f0f" if dark else "#fef2f2", "#ef4444"
-    return "#f59e0b", "#2d220f" if dark else "#fffbeb", "#f59e0b"
+        return "sell"
+    return "wait"
+
+def _decision_text(decision):
+    for e in ("📈", "⚠️", "⏳"):
+        decision = decision.replace(e, "")
+    return decision.strip()
+
+def _sig_colors(decision, dark=True):
+    pal = _report_palette(dark)
+    col = {"buy": pal["up"], "sell": pal["down"], "wait": pal["warn"]}[_decision_kind(decision)]
+    return col, pal["card"], col
+
+def _decision_badge(decision, dark=True):
+    col = _sig_colors(decision, dark)[0]
+    return (f'<span style="color:{col};font-weight:700;letter-spacing:1px">'
+            f'{html.escape(_decision_text(decision))}</span>')
+
+def format_results_overview_html(results, currency="HUF", dark=True):
+    pal = _report_palette(dark)
+
+    def L(hu, en, de=None):
+        return {"hu": hu, "en": en, "de": de or en}.get(_current_lang, en)
+
+    heads = [L("Eszköz", "Asset", "Asset"), L("Ár", "Price", "Kurs"), L("Napi", "Day", "Tag"),
+             L("AI célár (1h)", "AI target (1h)", "KI-Ziel (1h)"), L("Esély fel", "Prob up", "Wahrsch."),
+             "RSI", L("Bizalom", "Confidence", "Konfidenz"), L("Döntés", "Decision", "Entscheidung")]
+    th = "".join(
+        f'<th align="{"left" if i == 0 else "right"}" style="color:{pal["dim"]};font-size:10px;'
+        f'font-weight:700;padding:6px 10px;background:{pal["head"]}">{html.escape(h.upper())}</th>'
+        for i, h in enumerate(heads)
+    )
+    rows = []
+    for r in results:
+        dcp = r.get("day_change_pct")
+        dcol = pal["dim"] if dcp is None else (pal["up"] if dcp >= 0 else pal["down"])
+        cur, fut = float(r.get("current", 0)), float(r.get("future", 0))
+        fcol = pal["up"] if fut >= cur else pal["down"]
+        conf = (r.get("recommendation") or {}).get("confidence", 0)
+        td = f'style="padding:6px 10px;border-top:1px solid {pal["border"]}"'
+        rows.append(
+            f'<tr><td {td}><b>{html.escape(r.get("name", ""))}</b> '
+            f'<span style="color:{pal["dim"]};font-size:10px">{html.escape(r.get("symbol", ""))}</span></td>'
+            f'<td align="right" {td}>{_fmt_price(cur)}</td>'
+            f'<td align="right" {td}><span style="color:{dcol}">{"–" if dcp is None else f"{dcp:+.2f}%"}</span></td>'
+            f'<td align="right" {td}><span style="color:{fcol}">{_fmt_price(fut)}</span></td>'
+            f'<td align="right" {td}>{float(r.get("next_up_prob", 0)) * 100:.1f}%</td>'
+            f'<td align="right" {td}>{float(r.get("rsi", 0)):.1f}</td>'
+            f'<td align="right" {td}>{float(conf) * 100:.0f}%</td>'
+            f'<td align="right" {td}>{_decision_badge(r.get("decision", ""), dark)}</td></tr>'
+        )
+    return (
+        f'<table width="100%" cellspacing="0" cellpadding="0" border="1" '
+        f'style="border-collapse:collapse;border-style:solid;border-color:{pal["border"]};'
+        f'background:{pal["card"]};color:{pal["text"]};font-family:\'Inter\',\'Segoe UI\',Arial,sans-serif;'
+        f'font-size:12px;margin:4px 2px 10px 2px">'
+        f'<tr><td style="padding:0;border:none">'
+        f'<table width="100%" cellspacing="0" cellpadding="0">'
+        f'<tr>{th}</tr>{"".join(rows)}</table>'
+        f'</td></tr></table>'
+    )
 
 def format_result_html(result, currency="HUF", dark=True):
     """Részletes HTML kártya egy eszköz elemzéséhez — minden elérhető adattal."""
@@ -2873,10 +3113,11 @@ def format_result_html(result, currency="HUF", dark=True):
     rec      = result.get("recommendation", {})
     m        = result.get("metrics") or {}
 
+    pal = _report_palette(dark)
     border, bg, badge = _sig_colors(decision, dark)
-    text  = "#e5e7eb" if dark else "#1f2937"
-    dim   = "#9ca3af" if dark else "#6b7280"
-    tbord = "#374151" if dark else "#d0d7de"
+    text  = pal["text"]
+    dim   = pal["dim"]
+    tbord = pal["border"]
 
     def L(hu, en, de=None):
         return {"hu": hu, "en": en, "de": de or en}.get(_current_lang, en)
@@ -2920,14 +3161,15 @@ def format_result_html(result, currency="HUF", dark=True):
 
     dcp     = result.get("day_change_pct")
     dcp_str = (f"{'▲' if dcp >= 0 else '▼'} {dcp:+.2f}%" if dcp is not None else "")
-    dcp_col = "#22c55e" if (dcp or 0) >= 0 else "#ef4444"
+    dcp_col = pal["up"] if (dcp or 0) >= 0 else pal["down"]
 
     rsi = float(result.get("rsi", 50))
-    rsi_col = "#ef4444" if rsi > 70 else "#22c55e" if rsi < 30 else text
-    rsi_tag = (" 🔴" if rsi > 70 else " 🟢" if rsi < 30 else "")
+    rsi_col = pal["down"] if rsi > 70 else pal["up"] if rsi < 30 else text
+    rsi_tag = ("  " + L("túlvett", "overbought", "überkauft") if rsi > 70
+               else "  " + L("túladott", "oversold", "überverkauft") if rsi < 30 else "")
 
     macd_h   = m.get("macd_hist")
-    macd_col = "#22c55e" if (macd_h or 0) > 0 else "#ef4444"
+    macd_col = pal["up"] if (macd_h or 0) > 0 else pal["down"]
     macd_str = f"{macd_h:+.4f}" if macd_h is not None else "–"
     macd_line = m.get("macd_line")
     macd_sig  = m.get("macd_signal")
@@ -2945,9 +3187,9 @@ def format_result_html(result, currency="HUF", dark=True):
     cross     = result.get("ma_cross") or {}
     cross_tag = ""
     if cross.get("type") == "golden_cross":
-        cross_tag = '&nbsp;<span style="background:#22c55e;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">✨ Golden Cross</span>'
+        cross_tag = f'&nbsp;&nbsp;<span style="color:{pal["up"]};font-size:10px;font-weight:700">GOLDEN CROSS</span>'
     elif cross.get("type") == "death_cross":
-        cross_tag = '&nbsp;<span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">☠️ Death Cross</span>'
+        cross_tag = f'&nbsp;&nbsp;<span style="color:{pal["down"]};font-size:10px;font-weight:700">DEATH CROSS</span>'
 
     so = result.get("session_open")
     pc = result.get("previous_close")
@@ -2960,7 +3202,7 @@ def format_result_html(result, currency="HUF", dark=True):
     bb_html = ""
     if bb_u is not None:
         bb_html = row(L("BB felső", "BB upper", "BB oben"), fp(bb_u),
-                      L("BB alsó", "BB lower", "BB unten"), fp(bb_l), "#818cf8", "#818cf8")
+                      L("BB alsó", "BB lower", "BB unten"), fp(bb_l), dim, dim)
         bb_html += row(L("BB közép", "BB mid", "BB Mitte"), fp(bb_m))
 
     vlast = m.get("volume_last")
@@ -2968,7 +3210,7 @@ def format_result_html(result, currency="HUF", dark=True):
     vol_html = ""
     if vlast is not None and vlast > 0:
         vr_str = f"{vratio:.2f}×" if vratio is not None else "–"
-        vr_col = "#22c55e" if (vratio or 0) >= 1 else dim
+        vr_col = pal["up"] if (vratio or 0) >= 1 else dim
         vol_html = row(L("Forgalom", "Volume", "Volumen"), fvol(vlast),
                        L("vs 20-átlag", "vs 20-avg", "vs 20-Schnitt"), vr_str, text, vr_col)
 
@@ -2982,7 +3224,7 @@ def format_result_html(result, currency="HUF", dark=True):
     if sb is not None and ss is not None:
         sig_html = row(L("Vételi pont", "Buy score", "Kaufpunkte"), f"{sb:.1f}",
                        L("Eladási pont", "Sell score", "Verkaufspunkte"), f"{ss:.1f}",
-                       "#22c55e", "#ef4444")
+                       pal["up"], pal["down"])
 
     feat = result.get("feat_imp") or []
     feat_html = ""
@@ -3006,8 +3248,8 @@ def format_result_html(result, currency="HUF", dark=True):
     if supports or resistance:
         s_val = "  ".join(fp(s) for s in supports[:3]) or "–"
         r_val = "  ".join(fp(r) for r in resistance[:3]) or "–"
-        sr_html = (row(L("Támasz", "Support", "Stütze"), s_val, "", "", "#22c55e")
-                   + row(L("Ellenállás", "Resistance", "Widerstand"), r_val, "", "", "#ef4444"))
+        sr_html = (row(L("Támasz", "Support", "Stütze"), s_val, "", "", pal["up"])
+                   + row(L("Ellenállás", "Resistance", "Widerstand"), r_val, "", "", pal["down"]))
 
     inv     = result.get("investment") or {}
     inv_html = ""
@@ -3036,34 +3278,37 @@ def format_result_html(result, currency="HUF", dark=True):
     ai_html = ""
     if ai_text:
         ai_html = (f'<tr><td colspan="4" style="padding:6px 0 2px;border-top:1px solid {tbord};'
-                   f'color:{dim};font-size:11px;font-style:italic">🤖 {html.escape(ai_text)}</td></tr>')
+                   f'color:{text};font-size:11px"><span style="color:{dim};font-size:10px;font-weight:700">AI&nbsp;&nbsp;</span>{html.escape(ai_text)}</td></tr>')
 
     return f"""
-<div style="margin:5px 2px;padding:10px 14px;border-radius:8px;
-            border-left:4px solid {border};background:{bg};
-            font-family:'Segoe UI','Inter',Arial,sans-serif;font-size:12px;color:{text}">
-  <table width="100%" cellspacing="0" cellpadding="0"><tr>
-    <td>
-      <b style="font-size:14px;color:{border}">{html.escape(result.get('name',''))}</b>
-      <span style="color:{dim};font-size:11px"> {html.escape(result.get('symbol',''))}</span>
+<table width="100%" cellspacing="0" cellpadding="0" border="1"
+       style="border-collapse:collapse;border-style:solid;border-color:{tbord};background:{pal['card']};
+              margin:4px 2px 10px 2px;font-family:'Inter','Segoe UI',Arial,sans-serif;font-size:12px;color:{text}">
+<tr><td style="border:none;padding:0">
+  <table width="100%" cellspacing="0" cellpadding="0" style="background:{pal['head']}"><tr>
+    <td width="4" style="background:{border}"></td>
+    <td style="padding:9px 12px">
+      <b style="font-size:14px;color:{text}">{html.escape(result.get('name',''))}</b>
+      <span style="color:{dim};font-size:11px">&nbsp; {html.escape(result.get('symbol',''))}</span>
       {cross_tag}
     </td>
-    <td align="right">
-      <b style="color:{dcp_col}">{dcp_str}</b>&nbsp;&nbsp;
-      <span style="background:{badge};color:#fff;padding:2px 10px;border-radius:4px;font-weight:700">{html.escape(decision)}</span>
+    <td align="right" style="padding:9px 12px">
+      <b style="font-size:13px">{fp(result.get("current"))}</b>&nbsp;&nbsp;
+      <span style="color:{dcp_col}">{dcp_str}</span>&nbsp;&nbsp;&nbsp;
+      {_decision_badge(decision, dark)}
     </td>
   </tr></table>
-  <table width="100%" cellspacing="0" cellpadding="0">
+  <table width="100%" cellspacing="0" cellpadding="0" style="margin:2px 14px 10px 16px">
     {section(L("Ár", "Price", "Kurs"))}
     {row(L("Most", "Now", "Aktuell"), fp(result.get("current")),
-         L("AI célár (1h)", "AI target (1h)", "KI-Ziel (1h)"), fp(result.get("future")), text, "#38bdf8")}
+         L("AI célár (1h)", "AI target (1h)", "KI-Ziel (1h)"), fp(result.get("future")), text, pal["info"])}
     {open_prev_html}
     {row(L("MA(20)", "MA(20)", "MA(20)"), fp(result.get("ma")),
          L("Napi vált.", "Daily chg", "Tagesänd."),
          (f"{dcp:+.2f}%" if dcp is not None else "–"), text, dcp_col)}
     {section(L("AI modell", "AI model", "KI-Modell"))}
     {row(L("Esély fel", "Prob up", "Wahrsch. auf"), f"{result.get('next_up_prob',0)*100:.1f}%",
-         L("Pontosság", "Accuracy", "Genauigkeit"), f"{result.get('accuracy',0)*100:.1f}%", "#38bdf8")}
+         L("Pontosság", "Accuracy", "Genauigkeit"), f"{result.get('accuracy',0)*100:.1f}%", pal["info"])}
     {feat_html}
     {section(L("Indikátorok / kockázat", "Indicators / risk", "Indikatoren / Risiko"))}
     {row(f"RSI", f"{rsi:.1f}{rsi_tag}",
@@ -3071,7 +3316,7 @@ def format_result_html(result, currency="HUF", dark=True):
     {row("MACD hist", macd_str, "MACD line/sig", macd_ls, macd_col)}
     {bb_html}
     {vol_html}
-    {row(L("Max visszaesés", "Max drawdown", "Max Drawdown"), mdd_str, "", "", "#ef4444")}
+    {row(L("Max visszaesés", "Max drawdown", "Max Drawdown"), mdd_str, "", "", pal["down"])}
     {cross_html}
     {sr_html}
     {section(L("Döntés / ajánlás", "Decision / recommendation", "Entscheidung / Empfehlung"))}
@@ -3081,15 +3326,15 @@ def format_result_html(result, currency="HUF", dark=True):
          f"{rec.get('confidence',0)*100:.1f}%")}
     {sig_html}
     {"" if rec_side == neutral else
-     row(L("Belépő", "Entry", "Einstieg"), fp(rec.get("entry")), "", "", "#38bdf8")}
+     row(L("Belépő", "Entry", "Einstieg"), fp(rec.get("entry")), "", "", pal["info"])}
     {"" if rec_side == neutral else
-     row("Stop-loss", fp(rec.get("stop")), "Take-profit", fp(rec.get("take_profit")), "#ef4444", "#22c55e")}
+     row("Stop-loss", fp(rec.get("stop")), "Take-profit", fp(rec.get("take_profit")), pal["down"], pal["up"])}
     {reasons_html}
     {(section(L("Befektetés", "Investment", "Investition")) + inv_html) if inv_html else ""}
     {hold_html}
     {ai_html}
   </table>
-</div>"""
+</td></tr></table>"""
 
 def format_result(result, currency="HUF"):
     t = _tr
@@ -3580,7 +3825,7 @@ if QT_AVAILABLE:
             self._lang, self._theme = load_app_config()
             global _current_lang
             _current_lang = self._lang
-            self.setWindowTitle("AI Asset Analyzer Pro")
+            self.setWindowTitle("AI Crypto Tracker")
             self.setGeometry(100, 100, 1280, 780)
             self.apply_theme()
             self.invest_amount = None
@@ -3625,60 +3870,67 @@ if QT_AVAILABLE:
             self._fng_label = ""
 
             main_vbox = QVBoxLayout()
-            main_vbox.setContentsMargins(16, 14, 16, 14)
-            main_vbox.setSpacing(12)
+            main_vbox.setContentsMargins(0, 0, 0, 0)
+            main_vbox.setSpacing(0)
 
             header = QFrame()
             header.setObjectName("header")
             top_bar = QHBoxLayout(header)
-            top_bar.setContentsMargins(16, 10, 12, 10)
-            top_bar.setSpacing(10)
-            logo = QLabel("◆")
-            logo.setObjectName("logo_badge")
-            logo.setFixedSize(36, 36)
-            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            top_bar.setContentsMargins(16, 10, 16, 10)
+            top_bar.setSpacing(12)
+            logo = QLabel()
+            logo.setFixedSize(32, 32)
+            logo_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / "icon.png"
+            if logo_path.exists():
+                from PySide6.QtGui import QPixmap
+                dpr = self.devicePixelRatioF() or 1.0
+                pm = QPixmap(str(logo_path)).scaled(
+                    int(32 * dpr), int(32 * dpr),
+                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
+                )
+                pm.setDevicePixelRatio(dpr)
+                logo.setPixmap(pm)
             top_bar.addWidget(logo)
             title_box = QVBoxLayout()
             title_box.setSpacing(0)
-            self.label = QLabel("AI + Indikátor Elemző Pro")
+            self.label = QLabel("AI Crypto Tracker")
             self.label.setObjectName("title_label")
             title_box.addWidget(self.label)
-            self.stats_update = QLabel("–")
-            self.stats_update.setObjectName("subtitle_label")
-            title_box.addWidget(self.stats_update)
+            self.app_subtitle = QLabel("")
+            self.app_subtitle.setObjectName("subtitle_label")
+            title_box.addWidget(self.app_subtitle)
             top_bar.addLayout(title_box)
-            top_bar.addSpacing(12)
-            self.stats_assets = QLabel("Kiválasztva: 0")
-            self.stats_assets.setObjectName("stat_chip")
-            self.stats_decisions = QLabel("Vétel 0 | Eladás 0 | Várj 0")
-            self.stats_decisions.setObjectName("stat_chip")
-            self.fng_label = QLabel("😐 F&G: –")
-            self.fng_label.setObjectName("fng_chip")
-            self.fng_label.setToolTip("Crypto Fear & Greed Index (alternative.me)")
-            top_bar.addWidget(self.stats_assets)
-            top_bar.addWidget(self.stats_decisions)
-            top_bar.addWidget(self.fng_label)
+            top_bar.addSpacing(18)
+            self.kpi_assets = KpiBlock()
+            self.kpi_signals = KpiBlock()
+            self.kpi_fng = KpiBlock()
+            self.kpi_fng.setToolTip("Crypto Fear & Greed Index (alternative.me)")
+            self.stats_assets = self.kpi_assets.value
+            self.stats_decisions = self.kpi_signals.value
+            self.fng_label = self.kpi_fng.value
+            self.stats_decisions.setText("–")
+            self.fng_label.setText("–")
+            for k in (self.kpi_assets, self.kpi_signals, self.kpi_fng):
+                top_bar.addWidget(k)
             top_bar.addStretch(1)
-            live_box = QFrame()
-            live_box.setObjectName("live_box")
-            live_row = QHBoxLayout(live_box)
-            live_row.setContentsMargins(10, 2, 4, 2)
-            live_row.setSpacing(6)
-            self._pulse_dot = PulsingDot()
-            live_row.addWidget(self._pulse_dot)
-            self.live_status = QLabel("Élő mód: kikapcsolva")
-            self.live_status.setObjectName("live_status")
-            live_row.addWidget(self.live_status)
-            self.btn_interval = QPushButton("⏱  Időköz: 30s")
-            self.btn_interval.setObjectName("ghost_btn")
-            self.btn_interval.clicked.connect(self.set_live_interval)
-            live_row.addWidget(self.btn_interval)
-            top_bar.addWidget(live_box)
-            self.btn_live = AnimatedButton("📡  Élő mód indítása")
+            from PySide6.QtWidgets import QMenu
+            self.btn_menu = QPushButton("Menü")
+            self.btn_menu.setObjectName("live_btn")
+            self.app_menu = QMenu(self.btn_menu)
+            self.act_update = self.app_menu.addAction("Frissítések keresése…")
+            self.act_update.triggered.connect(lambda: self.check_updates(silent=False))
+            self.act_release_page = self.app_menu.addAction("Kiadások a GitHubon")
+            self.act_release_page.triggered.connect(self.open_release_page)
+            self.app_menu.addSeparator()
+            self.act_about = self.app_menu.addAction("Névjegy")
+            self.act_about.triggered.connect(self.show_about)
+            self.btn_menu.setMenu(self.app_menu)
+            top_bar.addWidget(self.btn_menu)
+            self.btn_live = AnimatedButton("Élő mód indítása")
             self.btn_live.setObjectName("live_btn")
             self.btn_live.clicked.connect(self.toggle_live_mode)
             top_bar.addWidget(self.btn_live)
-            self.btn = AnimatedButton("▶  Elemzés")
+            self.btn = AnimatedButton("Elemzés")
             self.btn.setObjectName("primary_btn")
             self.btn.setToolTip("F5")
             self.btn.clicked.connect(lambda: self.run_analysis())
@@ -3686,11 +3938,47 @@ if QT_AVAILABLE:
 
             main_vbox.addWidget(header)
 
+            status_bar = QFrame()
+            status_bar.setObjectName("statusbar")
+            sb_row = QHBoxLayout(status_bar)
+            sb_row.setContentsMargins(12, 3, 10, 3)
+            sb_row.setSpacing(8)
+            self._pulse_dot = PulsingDot()
+            sb_row.addWidget(self._pulse_dot)
+            self.live_status = QLabel("Élő mód: kikapcsolva")
+            self.live_status.setObjectName("live_status")
+            sb_row.addWidget(self.live_status)
+            self.btn_interval = QPushButton("Időköz: 30s")
+            self.btn_interval.setObjectName("ghost_btn")
+            self.btn_interval.clicked.connect(self.set_live_interval)
+            sb_row.addWidget(self.btn_interval)
+            sb_row.addStretch(1)
+            self.btn_update_badge = QPushButton("")
+            self.btn_update_badge.setObjectName("update_badge")
+            self.btn_update_badge.setVisible(False)
+            self.btn_update_badge.clicked.connect(lambda: self.check_updates(silent=False))
+            sb_row.addWidget(self.btn_update_badge)
+            self.stats_update = QLabel("–")
+            self.stats_update.setObjectName("status_text")
+            sb_row.addWidget(self.stats_update)
+            sb_sep = QLabel("·")
+            sb_sep.setObjectName("status_text")
+            sb_row.addWidget(sb_sep)
+            self.status_source = QLabel("Yahoo Finance")
+            self.status_source.setObjectName("status_text")
+            sb_row.addWidget(self.status_source)
+            sb_sep2 = QLabel("·")
+            sb_sep2.setObjectName("status_text")
+            sb_row.addWidget(sb_sep2)
+            self.status_version = QLabel(f"v{APP_VERSION}")
+            self.status_version.setObjectName("status_text")
+            sb_row.addWidget(self.status_version)
+
             content_row = QHBoxLayout()
-            content_row.setSpacing(12)
+            content_row.setSpacing(0)
 
             left_col = QVBoxLayout()
-            left_col.setContentsMargins(14, 14, 14, 14)
+            left_col.setContentsMargins(14, 12, 14, 14)
             left_col.setSpacing(8)
 
             assets_title = QLabel("ESZKÖZÖK")
@@ -3721,7 +4009,7 @@ if QT_AVAILABLE:
             self.cb_favorites_only = QCheckBox("Csak kedvencek")
             self.cb_favorites_only.toggled.connect(self.on_favorites_filter_toggled)
             fav_row.addWidget(self.cb_favorites_only)
-            self.btn_fav_toggle = QPushButton("☆")
+            self.btn_fav_toggle = QPushButton("")
             self.btn_fav_toggle.setObjectName("ghost_btn")
             self.btn_fav_toggle.setToolTip("Kedvenc váltás")
             self.btn_fav_toggle.clicked.connect(self.toggle_favorite_selection)
@@ -3744,19 +4032,22 @@ if QT_AVAILABLE:
                 self.list_widget.addItem(name)
             self.list_widget.setCurrentRow(0)
             self.list_widget.setObjectName("asset_list")
+            self.asset_delegate = AssetItemDelegate(self.list_widget)
+            self.asset_delegate.favorites = self.favorite_names
+            self.list_widget.setItemDelegate(self.asset_delegate)
             left_col.addWidget(self.list_widget, 1)
 
             bottom_left = QHBoxLayout()
             bottom_left.setSpacing(6)
-            self.btn_select_all = QPushButton("☑ Összes")
+            self.btn_select_all = QPushButton("Összes")
             self.btn_select_all.setObjectName("compact_btn")
             self.btn_select_all.clicked.connect(self.select_all_assets)
             bottom_left.addWidget(self.btn_select_all)
-            self.btn_clear = QPushButton("🗑 Törlés")
+            self.btn_clear = QPushButton("Törlés")
             self.btn_clear.setObjectName("compact_btn")
             self.btn_clear.clicked.connect(self.output_clear)
             bottom_left.addWidget(self.btn_clear)
-            self.btn_set_amount = QPushButton("💰 Összeg")
+            self.btn_set_amount = QPushButton("Összeg")
             self.btn_set_amount.setObjectName("compact_btn")
             self.btn_set_amount.clicked.connect(self.set_invest_amount)
             bottom_left.addWidget(self.btn_set_amount)
@@ -3773,11 +4064,11 @@ if QT_AVAILABLE:
             left_panel = QFrame()
             left_panel.setObjectName("sidebar")
             left_panel.setLayout(left_col)
-            left_panel.setFixedWidth(372)
+            left_panel.setFixedWidth(340)
             content_row.addWidget(left_panel)
 
             right = QVBoxLayout()
-            right.setContentsMargins(14, 8, 14, 14)
+            right.setContentsMargins(16, 4, 16, 14)
             right.setSpacing(10)
 
             layout = main_vbox
@@ -3790,6 +4081,9 @@ if QT_AVAILABLE:
             self.nav_tabs.setUsesScrollButtons(True)
             self.nav_tabs.setElideMode(Qt.TextElideMode.ElideNone)
             right.addWidget(self.nav_tabs)
+            tab_rule = QFrame()
+            tab_rule.setObjectName("tab_rule")
+            right.addWidget(tab_rule)
 
             self.stacked = QStackedWidget()
             self.nav_tabs.currentChanged.connect(self.stacked.setCurrentIndex)
@@ -3812,14 +4106,14 @@ if QT_AVAILABLE:
             analysis_layout.setSpacing(6)
 
             out_row = QHBoxLayout()
-            self.btn_copy_output = QPushButton("📋 Vágólapra")
+            self.btn_copy_output = QPushButton("Vágólapra")
             self.btn_copy_output.clicked.connect(self.copy_output_to_clipboard)
             out_row.addWidget(self.btn_copy_output)
-            self.btn_scanner = QPushButton("⚡ Gyors scanner")
+            self.btn_scanner = QPushButton("Gyors scanner")
             self.btn_scanner.setToolTip("Összes kijelölt eszköz kompakt jelzéstáblája")
             self.btn_scanner.clicked.connect(self.run_quick_scanner)
             out_row.addWidget(self.btn_scanner)
-            self.btn_export_csv = QPushButton("💾 CSV export")
+            self.btn_export_csv = QPushButton("CSV export")
             self.btn_export_csv.setToolTip("Az utolsó elemzés eredményeinek exportja CSV-be")
             self.btn_export_csv.clicked.connect(self.export_analysis_csv)
             out_row.addWidget(self.btn_export_csv)
@@ -3904,12 +4198,12 @@ if QT_AVAILABLE:
             chart_outer.addWidget(self.chart_view, 1)
 
             chart_tab.setLayout(chart_outer)
-            self.tabs.addTab(chart_tab, "📈 Árfolyam diagram")
+            self.tabs.addTab(chart_tab, "Árfolyam diagram")
 
             alerts_tab = QWidget()
             alerts_layout = QVBoxLayout()
 
-            rules_group = QGroupBox("🔔  Riasztási szabályok")
+            rules_group = QGroupBox("Riasztási szabályok")
             rules_group.setObjectName("settings_group")
             rules_v = QVBoxLayout()
             rules_v.setContentsMargins(10, 8, 10, 10)
@@ -3933,7 +4227,7 @@ if QT_AVAILABLE:
             self.rule_value_edit.setPlaceholderText("érték")
             self.rule_value_edit.setFixedWidth(110)
             rule_form.addWidget(self.rule_value_edit)
-            self.btn_add_rule = QPushButton("➕ Hozzáadás")
+            self.btn_add_rule = QPushButton("Hozzáadás")
             self.btn_add_rule.clicked.connect(self.add_alert_rule_from_form)
             rule_form.addWidget(self.btn_add_rule)
             rules_v.addLayout(rule_form)
@@ -3947,10 +4241,10 @@ if QT_AVAILABLE:
             rules_v.addWidget(self.rules_table)
 
             rules_btn_row = QHBoxLayout()
-            self.btn_remove_rule = QPushButton("🗑 Kijelölt szabály törlése")
+            self.btn_remove_rule = QPushButton("Kijelölt szabály törlése")
             self.btn_remove_rule.clicked.connect(self.remove_selected_rule)
             rules_btn_row.addWidget(self.btn_remove_rule)
-            self.btn_edit_rules_json = QPushButton("📋 JSON szerkesztő")
+            self.btn_edit_rules_json = QPushButton("JSON szerkesztő")
             self.btn_edit_rules_json.clicked.connect(self.edit_alert_rules_dialog)
             rules_btn_row.addWidget(self.btn_edit_rules_json)
             rules_btn_row.addStretch(1)
@@ -3973,10 +4267,10 @@ if QT_AVAILABLE:
             portfolio_layout.setSpacing(6)
 
             ph_row = QHBoxLayout()
-            self.btn_edit_holdings = QPushButton("✏️  Mennyiségek szerkesztése")
+            self.btn_edit_holdings = QPushButton("Mennyiségek szerkesztése")
             self.btn_edit_holdings.clicked.connect(self.edit_holdings_dialog)
             ph_row.addWidget(self.btn_edit_holdings)
-            self.btn_refresh_portfolio = QPushButton("🔄  Frissítés")
+            self.btn_refresh_portfolio = QPushButton("Frissítés")
             self.btn_refresh_portfolio.clicked.connect(self.refresh_portfolio_live)
             ph_row.addWidget(self.btn_refresh_portfolio)
             ph_row.addStretch(1)
@@ -3997,7 +4291,7 @@ if QT_AVAILABLE:
 
             self.portfolio_output = QTextEdit()
             self.portfolio_output.setReadOnly(True)
-            self.portfolio_output.setMaximumHeight(140)
+            self.portfolio_output.setMaximumHeight(84)
             self.portfolio_output.setPlaceholderText("Portfolio összegzés itt jelenik meg...")
             portfolio_layout.addWidget(self.portfolio_output)
             portfolio_tab.setLayout(portfolio_layout)
@@ -4066,7 +4360,7 @@ if QT_AVAILABLE:
                 gb.setLayout(inner)
                 return gb, inner
 
-            grp_appearance, lay_appearance = make_group("🎨  Megjelenítés")
+            grp_appearance, lay_appearance = make_group("Megjelenítés")
             r1 = QHBoxLayout()
             self.lang_label_widget = QLabel("Nyelv:")
             r1.addWidget(self.lang_label_widget)
@@ -4088,7 +4382,7 @@ if QT_AVAILABLE:
             lay_appearance.addLayout(r2)
             settings_layout.addWidget(grp_appearance)
 
-            grp_general, lay_general = make_group("⚙️  Általános")
+            grp_general, lay_general = make_group("Általános")
             self.auto_clear_checkbox = QCheckBox("Elemzés törlése minden frissítés előtt")
             self.auto_clear_checkbox.setChecked(self.auto_clear_analysis)
             self.auto_clear_checkbox.toggled.connect(self.toggle_auto_clear)
@@ -4101,9 +4395,12 @@ if QT_AVAILABLE:
             self.csv_autosave_checkbox.setChecked(self.csv_autosave_enabled)
             self.csv_autosave_checkbox.toggled.connect(self.toggle_csv_autosave)
             lay_general.addWidget(self.csv_autosave_checkbox)
-            self.btn_csv_path = QPushButton("💾  CSV fájl: live_history.csv")
+            self.btn_csv_path = QPushButton("CSV fájl: live_history.csv")
             self.btn_csv_path.clicked.connect(self.set_csv_path)
             lay_general.addWidget(self.btn_csv_path)
+            self.cb_update_check = QCheckBox("Frissítések keresése indításkor")
+            self.cb_update_check.setChecked(True)
+            lay_general.addWidget(self.cb_update_check)
             sched_row = QHBoxLayout()
             self.cb_schedule_analysis = QCheckBox("Napi ütemezett elemzés:")
             self.time_schedule = QTimeEdit()
@@ -4118,35 +4415,35 @@ if QT_AVAILABLE:
             self.schedule_timer.timeout.connect(self.schedule_tick)
             self.schedule_timer.start(30_000)
 
-            grp_alerts, lay_alerts = make_group("🔔  Riasztások")
-            self.btn_alert_threshold = QPushButton("⚡  Küszöb: 0.80%")
+            grp_alerts, lay_alerts = make_group("Riasztások")
+            self.btn_alert_threshold = QPushButton("Küszöb: 0.80%")
             self.btn_alert_threshold.clicked.connect(self.set_alert_threshold)
             lay_alerts.addWidget(self.btn_alert_threshold)
-            self.btn_edit_alert_rules = QPushButton("📋  Egyedi ár/RSI szabályok (JSON)…")
+            self.btn_edit_alert_rules = QPushButton("Egyedi ár/RSI szabályok (JSON)…")
             self.btn_edit_alert_rules.clicked.connect(self.edit_alert_rules_dialog)
             lay_alerts.addWidget(self.btn_edit_alert_rules)
             settings_layout.addWidget(grp_alerts)
 
-            grp_tg, lay_tg = make_group("📲  Telegram")
-            self.btn_telegram = QPushButton("⚙️  Beállítás (token + chat ID)")
+            grp_tg, lay_tg = make_group("Telegram")
+            self.btn_telegram = QPushButton("Beállítás (token + chat ID)")
             self.btn_telegram.setObjectName("telegram_btn")
             self.btn_telegram.clicked.connect(self.configure_telegram)
             lay_tg.addWidget(self.btn_telegram)
             tg_action_row = QHBoxLayout()
-            self.btn_telegram_test = QPushButton("📨  Tesztüzenet")
+            self.btn_telegram_test = QPushButton("Tesztüzenet")
             self.btn_telegram_test.setObjectName("telegram_btn")
             self.btn_telegram_test.clicked.connect(self.send_telegram_test)
             tg_action_row.addWidget(self.btn_telegram_test)
-            self.btn_telegram_report = QPushButton("📊  Riport küldése")
+            self.btn_telegram_report = QPushButton("Riport küldése")
             self.btn_telegram_report.setObjectName("telegram_btn")
             self.btn_telegram_report.clicked.connect(self.send_telegram_full_report)
             tg_action_row.addWidget(self.btn_telegram_report)
             lay_tg.addLayout(tg_action_row)
-            self.telegram_status = QLabel("📵  Telegram: kikapcsolva")
+            self.telegram_status = QLabel("Telegram: kikapcsolva")
             self.telegram_status.setObjectName("status_label")
             lay_tg.addWidget(self.telegram_status)
             self.telegram_help = QLabel(
-                '🔗 Hol találom? '
+                'Hol találom? '
                 '<a style="color:#60a5fa" href="https://t.me/BotFather">BotFather (token)</a> '
                 '&nbsp;·&nbsp; '
                 '<a style="color:#60a5fa" href="https://t.me/userinfobot">Chat ID (userinfobot)</a>'
@@ -4158,26 +4455,26 @@ if QT_AVAILABLE:
             lay_tg.addWidget(self.telegram_help)
             settings_layout.addWidget(grp_tg)
 
-            grp_dc, lay_dc = make_group("💬  Discord")
-            self.btn_discord = QPushButton("⚙️  Beállítás (webhook URL)")
+            grp_dc, lay_dc = make_group("Discord")
+            self.btn_discord = QPushButton("Beállítás (webhook URL)")
             self.btn_discord.setObjectName("discord_btn")
             self.btn_discord.clicked.connect(self.configure_discord)
             lay_dc.addWidget(self.btn_discord)
             dc_action_row = QHBoxLayout()
-            self.btn_discord_test = QPushButton("📨  Tesztüzenet")
+            self.btn_discord_test = QPushButton("Tesztüzenet")
             self.btn_discord_test.setObjectName("discord_btn")
             self.btn_discord_test.clicked.connect(self.send_discord_test)
             dc_action_row.addWidget(self.btn_discord_test)
-            self.btn_discord_report = QPushButton("📊  Riport küldése")
+            self.btn_discord_report = QPushButton("Riport küldése")
             self.btn_discord_report.setObjectName("discord_btn")
             self.btn_discord_report.clicked.connect(self.send_discord_full_report)
             dc_action_row.addWidget(self.btn_discord_report)
             lay_dc.addLayout(dc_action_row)
-            self.discord_status = QLabel("📵  Discord: kikapcsolva")
+            self.discord_status = QLabel("Discord: kikapcsolva")
             self.discord_status.setObjectName("status_label")
             lay_dc.addWidget(self.discord_status)
             self.discord_help = QLabel(
-                '🔗 Hol találom? Discord szerver → Csatorna beállításai → '
+                'Hol találom? Discord szerver → Csatorna beállításai → '
                 '<b>Integrációk → Webhookok → Új webhook → Webhook URL másolása</b>'
             )
             self.discord_help.setObjectName("status_label")
@@ -4186,30 +4483,30 @@ if QT_AVAILABLE:
             lay_dc.addWidget(self.discord_help)
             settings_layout.addWidget(grp_dc)
 
-            grp_ai, lay_ai = make_group("🤖  AI Kommentár")
+            grp_ai, lay_ai = make_group("AI Kommentár")
             self.ai_checkbox = QCheckBox("Felhő AI magyarázat engedélyezve")
             self.ai_checkbox.setChecked(self.ai_commentary_enabled)
             self.ai_checkbox.toggled.connect(self.toggle_ai_commentary)
             lay_ai.addWidget(self.ai_checkbox)
-            self.btn_ai_config = QPushButton("🔑  API kulcs + modell beállítása")
+            self.btn_ai_config = QPushButton("API kulcs + modell beállítása")
             self.btn_ai_config.clicked.connect(self.configure_ai)
             lay_ai.addWidget(self.btn_ai_config)
             self.ai_status = QLabel("AI: kikapcsolva")
             self.ai_status.setObjectName("status_label")
             lay_ai.addWidget(self.ai_status)
             self.ai_help = QLabel(
-                '🔑 API kulcs: '
+                'API kulcs: '
                 '<a style="color:#60a5fa" href="https://console.anthropic.com/settings/keys">Claude (Anthropic)</a> '
                 '&nbsp;·&nbsp; '
                 '<a style="color:#60a5fa" href="https://platform.openai.com/api-keys">OpenAI</a>'
-                '<br>💡 Vagy ingyen: „Claude helyi (előfizetés, CLI)" — ha be vagy lépve a Claude Code-ba.'
+                '<br>Vagy ingyen: „Claude helyi (előfizetés, CLI)" — ha be vagy lépve a Claude Code-ba.'
             )
             self.ai_help.setObjectName("status_label")
             self.ai_help.setTextFormat(Qt.TextFormat.RichText)
             self.ai_help.setOpenExternalLinks(True)
             self.ai_help.setToolTip("Megnyitás a böngészőben")
             lay_ai.addWidget(self.ai_help)
-            self.btn_export_html = QPushButton("📄  HTML riport mentése…")
+            self.btn_export_html = QPushButton("HTML riport mentése…")
             self.btn_export_html.clicked.connect(self.export_html_report)
             lay_ai.addWidget(self.btn_export_html)
             settings_layout.addWidget(grp_ai)
@@ -4225,7 +4522,8 @@ if QT_AVAILABLE:
             right_panel.setObjectName("content_card")
             right_panel.setLayout(right)
             content_row.addWidget(right_panel, 1)
-            main_vbox.addLayout(content_row)
+            main_vbox.addLayout(content_row, 1)
+            main_vbox.addWidget(status_bar)
             self.setLayout(main_vbox)
             session = load_session_state()
             if "invest_amount" in session and session["invest_amount"] is not None:
@@ -4245,6 +4543,8 @@ if QT_AVAILABLE:
             self.auto_clear_checkbox.setChecked(self.auto_clear_analysis)
             self.sound_alert_checkbox.setChecked(self.sound_alerts_enabled)
             self.csv_autosave_checkbox.setChecked(self.csv_autosave_enabled)
+            if "update_check" in session:
+                self.cb_update_check.setChecked(bool(session["update_check"]))
             if "schedule_enabled" in session:
                 self.cb_schedule_analysis.setChecked(bool(session["schedule_enabled"]))
             if "schedule_time" in session:
@@ -4293,6 +4593,13 @@ if QT_AVAILABLE:
             self._fng_timer.timeout.connect(self._fetch_fng)
             self._fng_timer.start(800)
 
+            self._update_notifier = UpdateNotifier(self)
+            self._update_notifier.done.connect(self._on_update_checked)
+            self._update_silent = True
+            self._latest_release = None
+            if self.cb_update_check.isChecked():
+                QTimer.singleShot(3000, lambda: self.check_updates(silent=True))
+
             self._startup_chart_timer = QTimer(self)
             self._startup_chart_timer.setSingleShot(True)
             self._startup_chart_timer.timeout.connect(self.refresh_price_chart)
@@ -4304,6 +4611,136 @@ if QT_AVAILABLE:
             self._out_fade = QPropertyAnimation(self._out_opacity, b"opacity")
             self._out_fade.setDuration(400)
             self._out_fade.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        def check_updates(self, silent=False):
+            import threading
+            self._update_silent = silent
+            if not silent:
+                self.act_update.setEnabled(False)
+                self.btn_update_badge.setEnabled(False)
+
+            def work():
+                try:
+                    res = check_for_update()
+                except Exception as e:
+                    res = e
+                self._update_notifier.done.emit(res)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def _on_update_checked(self, res):
+            from PySide6.QtWidgets import QMessageBox
+            self.act_update.setEnabled(True)
+            self.btn_update_badge.setEnabled(True)
+            silent = self._update_silent
+            if isinstance(res, Exception):
+                if not silent:
+                    QMessageBox.warning(self, "Frissítés", f"Nem sikerült elérni a GitHubot:\n{res}")
+                return
+            available, rel, label = res
+            self._latest_release = rel
+            if not available:
+                self.btn_update_badge.setVisible(False)
+                if not silent:
+                    QMessageBox.information(
+                        self, "Frissítés",
+                        f"A legfrissebb verziót használod (v{APP_VERSION})."
+                        + (f"\nLegutóbbi kiadás a GitHubon: {label}" if label else ""),
+                    )
+                return
+            self.btn_update_badge.setText(f"Új verzió: {label}")
+            self.btn_update_badge.setVisible(True)
+            if silent:
+                self.log_alert(f"Új verzió érhető el: {label} (Menü → Frissítések keresése)")
+                return
+            self._offer_update(rel, label)
+
+        def _offer_update(self, rel, label):
+            from PySide6.QtWidgets import QMessageBox
+            notes = (rel.get("body") or "").strip()
+            if len(notes) > 900:
+                notes = notes[:900] + "…"
+            mode = install_mode()
+            box = QMessageBox(self)
+            box.setWindowTitle("Frissítés elérhető")
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText(f"<b>Új verzió: {html.escape(label)}</b><br>Jelenlegi: v{APP_VERSION}")
+            if notes:
+                box.setDetailedText(notes)
+            if mode == "git":
+                box.setInformativeText(
+                    "Ez egy git-tárolóból futó fejlesztői példány – a frissítés itt "
+                    "„git pull” paranccsal történik. Lefuttassam most?"
+                )
+            elif mode == "frozen":
+                inst = find_installer_asset(rel)
+                box.setInformativeText(
+                    "Letöltöm és elindítom az új telepítőt? A program bezárul." if inst
+                    else "Megnyissam a kiadás oldalát a böngészőben?"
+                )
+            else:
+                box.setInformativeText(
+                    "Letöltöm és telepítem? A beállításaid és az előzményeid megmaradnak, "
+                    "a mostani verzióról mentés készül."
+                )
+            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            box.setDefaultButton(QMessageBox.StandardButton.Yes)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                return
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                if mode == "git":
+                    out = subprocess.run(
+                        ["git", "-C", str(Path(__file__).resolve().parent), "pull", "--ff-only"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    QApplication.restoreOverrideCursor()
+                    if out.returncode != 0:
+                        QMessageBox.warning(self, "Frissítés", f"A git pull nem sikerült:\n{out.stderr or out.stdout}")
+                        return
+                    self._ask_restart("A tároló frissítve.")
+                elif mode == "frozen":
+                    inst = find_installer_asset(rel)
+                    if not inst:
+                        QApplication.restoreOverrideCursor()
+                        self.open_release_page()
+                        return
+                    import tempfile
+                    dest = Path(tempfile.gettempdir()) / inst["name"]
+                    dest.write_bytes(_download(inst["browser_download_url"], timeout=300))
+                    QApplication.restoreOverrideCursor()
+                    subprocess.Popen([str(dest)])
+                    QApplication.quit()
+                else:
+                    backup = apply_source_update(rel)
+                    QApplication.restoreOverrideCursor()
+                    self.btn_update_badge.setVisible(False)
+                    self.log_alert(f"Frissítve: {label} (előző verzió mentve: {backup})")
+                    self._ask_restart(f"Frissítve: {label}.\nAz előző verzió mentése: {backup}")
+            except Exception as e:
+                QApplication.restoreOverrideCursor()
+                QMessageBox.critical(self, "Frissítés", f"A frissítés nem sikerült, a program változatlan maradt.\n\n{e}")
+
+        def _ask_restart(self, msg):
+            from PySide6.QtWidgets import QMessageBox
+            r = QMessageBox.question(self, "Frissítés", f"{msg}\n\nÚjraindítod most a programot?")
+            if r == QMessageBox.StandardButton.Yes:
+                self._save_session_state()
+                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())] + sys.argv[1:])
+
+        def open_release_page(self):
+            from PySide6.QtGui import QDesktopServices
+            url = (self._latest_release or {}).get("html_url") or f"https://github.com/{UPDATE_REPO}/releases"
+            QDesktopServices.openUrl(QUrl(url))
+
+        def show_about(self):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.about(
+                self, "Névjegy",
+                f"<b>AI Crypto Tracker</b> v{APP_VERSION}<br>"
+                f"Piaci elemzés és előrejelzés – Yahoo Finance adatokkal.<br><br>"
+                f'<a href="https://github.com/{UPDATE_REPO}">github.com/{UPDATE_REPO}</a>',
+            )
 
         def closeEvent(self, event):
             self._save_session_state()
@@ -4319,6 +4756,7 @@ if QT_AVAILABLE:
                 "csv_autosave_enabled": self.csv_autosave_enabled,
                 "csv_path": self.csv_path,
                 "schedule_enabled": self.cb_schedule_analysis.isChecked(),
+                "update_check": self.cb_update_check.isChecked(),
                 "schedule_time": self.time_schedule.time().toString("HH:mm"),
                 "selected_assets": [i.text() for i in self.list_widget.selectedItems()],
                 "active_tab": self.stacked.currentIndex(),
@@ -4362,6 +4800,10 @@ if QT_AVAILABLE:
             t = self.tr_
             self.setWindowTitle(t("window_title"))
             self.label.setText(t("title_label"))
+            self.app_subtitle.setText(t("app_subtitle"))
+            self.kpi_assets.caption.setText(t("kpi_selected"))
+            self.kpi_signals.caption.setText(t("kpi_signals"))
+            self.kpi_fng.caption.setText(t("kpi_fng"))
             self.asset_search.setPlaceholderText(t("search_placeholder"))
             self.cb_favorites_only.setText(t("only_favorites"))
             self.btn_fav_toggle.setText(t("fav_toggle"))
@@ -4451,17 +4893,17 @@ if QT_AVAILABLE:
                 self._fng_value = v
                 self._fng_label = label
                 if v <= 25:
-                    emoji, col = "😨", "#ef4444"
+                    col = "#ea3943"
                 elif v <= 45:
-                    emoji, col = "😟", "#f97316"
+                    col = "#f0883e"
                 elif v <= 55:
-                    emoji, col = "😐", "#f59e0b"
-                elif v <= 75:
-                    emoji, col = "😊", "#84cc16"
+                    col = "#e0a43a"
                 else:
-                    emoji, col = "🤑", "#22c55e"
-                self.fng_label.setText(f"{emoji} F&G: {v} ({label})")
-                self.fng_label.setStyleSheet(f"color: {col};")
+                    col = "#16c784"
+                self.fng_label.setText(
+                    f"<span style='color:{col}'>{v}</span> "
+                    f"<span style='font-size:11px;color:#8b93a1;font-weight:400'>{html.escape(label)}</span>"
+                )
                 self.update_summary_panel()
 
         def run_quick_scanner(self):
@@ -4469,24 +4911,8 @@ if QT_AVAILABLE:
             rate, currency, _ = self.resolve_rate_currency()
             items = self.selected_asset_items()
             dark = self._theme == "dark"
-            bg   = "#161b22" if dark else "#ffffff"
-            text = "#c9d1d9" if dark else "#24292f"
-            hdr  = "#21262d" if dark else "#f6f8fa"
-            bord = "#30363d" if dark else "#d0d7de"
-
-            html_parts = [
-                f'<div style="font-family:monospace;font-size:12px;color:{text}">',
-                f'<table width="100%" cellspacing="0" cellpadding="4" '
-                f'style="border-collapse:collapse;border:1px solid {bord}">',
-                f'<tr style="background:{hdr}">',
-                f'<th style="border:1px solid {bord};text-align:left;padding:5px 8px">Eszköz</th>',
-                f'<th style="border:1px solid {bord}">Ár</th>',
-                f'<th style="border:1px solid {bord}">Napi %</th>',
-                f'<th style="border:1px solid {bord}">RSI</th>',
-                f'<th style="border:1px solid {bord}">AI fel%</th>',
-                f'<th style="border:1px solid {bord}">Döntés</th>',
-                '</tr>',
-            ]
+            pal = _report_palette(dark)
+            scan_results, errors = [], []
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
             if hasattr(self, "_shimmer"):
@@ -4495,42 +4921,17 @@ if QT_AVAILABLE:
             total = len(items)
             for i, (name, sym) in enumerate(items):
                 try:
-                    r = analyze_asset(name, sym, rate, currency)
-                    dec = r["decision"]
-                    if "📈" in dec:
-                        dec_col, row_bg = "#22c55e", "#0f2d1f" if dark else "#f0fdf4"
-                    elif "⚠️" in dec:
-                        dec_col, row_bg = "#ef4444", "#2d0f0f" if dark else "#fef2f2"
-                    else:
-                        dec_col, row_bg = "#f59e0b", "#2d220f" if dark else "#fffbeb"
-                    dcp = r.get("day_change_pct")
-                    dcp_str = f"{dcp:+.2f}%" if dcp is not None else "–"
-                    dcp_col = "#22c55e" if (dcp or 0) >= 0 else "#ef4444"
-                    cur = float(r["current"])
-                    cur_str = f"{cur:,.0f}" if cur >= 100 else f"{cur:.4f}"
-                    html_parts.append(
-                        f'<tr style="background:{row_bg}">'
-                        f'<td style="border:1px solid {bord};padding:4px 8px"><b>{html.escape(name)}</b></td>'
-                        f'<td style="border:1px solid {bord};text-align:right;padding:4px 8px">{cur_str}</td>'
-                        f'<td style="border:1px solid {bord};text-align:right;color:{dcp_col};padding:4px 8px">'
-                        f'<b>{dcp_str}</b></td>'
-                        f'<td style="border:1px solid {bord};text-align:right;padding:4px 8px">'
-                        f'{r["rsi"]:.1f}</td>'
-                        f'<td style="border:1px solid {bord};text-align:right;padding:4px 8px">'
-                        f'{r["next_up_prob"]*100:.1f}%</td>'
-                        f'<td style="border:1px solid {bord};text-align:center;color:{dec_col};'
-                        f'padding:4px 8px"><b>{html.escape(dec)}</b></td>'
-                        f'</tr>'
-                    )
+                    scan_results.append(analyze_asset(name, sym, rate, currency))
                 except Exception as e:
-                    html_parts.append(
-                        f'<tr><td colspan="6" style="border:1px solid {bord};color:#ef4444;padding:4px 8px">'
-                        f'{html.escape(name)}: hiba — {html.escape(str(e))}</td></tr>'
+                    errors.append(
+                        f'<div style="color:{pal["dim"]};padding:4px 4px">'
+                        f'<b style="color:{pal["down"]}">{html.escape(name)}</b>: {html.escape(str(e))}</div>'
                     )
                 self.progress_bar.setValue(int((i + 1) / total * 100))
                 QApplication.processEvents()
-            html_parts.append("</table></div>")
-            self.output.setHtml("".join(html_parts))
+            self.output.setHtml(
+                format_results_overview_html(scan_results, currency=currency, dark=dark) + "".join(errors)
+            )
             self.progress_bar.setVisible(False)
             if hasattr(self, "_shimmer"):
                 self._shimmer.stop()
@@ -4602,33 +5003,27 @@ if QT_AVAILABLE:
             self.apply_styles()
             if hasattr(self, "candle_widget"):
                 self.candle_widget.set_dark_mode(self._theme == "dark")
-            if hasattr(self, "btn"):
-                self.btn.set_glow_color(124, 140, 255)
-            if hasattr(self, "btn_live"):
-                self.btn_live.set_glow_color(245, 177, 66)
+            if hasattr(self, "asset_delegate"):
+                self.asset_delegate.muted = QColor(self.THEME_TOKENS[self._theme if self._theme in self.THEME_TOKENS else "dark"]["muted"])
 
         THEME_TOKENS = {
             "dark": {
-                "bg": "#0b1018", "surface": "#111826", "raised": "#161f30",
-                "hover": "#1c2740", "border": "#222d41", "border_strong": "#2f3c55",
-                "text": "#e7ebf3", "muted": "#8b96ab", "faint": "#5d6880",
-                "accent": "#5b6cff", "accent_hover": "#6f7eff", "accent_soft": "#1d2350",
-                "accent_text": "#a3adff", "on_accent": "#ffffff",
-                "live": "#f5b142", "live_hover": "#f8c266", "on_live": "#1a1206",
-                "stop": "#ef4444", "stop_hover": "#f26464",
-                "tg": "#38a3e8", "dc": "#7983f5", "danger": "#f87171",
-                "scroll": "#2f3c55",
+                "bg": "#0d1015", "surface": "#12161d", "raised": "#171c25",
+                "hover": "#1d2330", "border": "#222936", "border_strong": "#2d3545",
+                "text": "#e4e7ec", "muted": "#8b93a1", "faint": "#5a6271",
+                "accent": "#2f6fed", "accent_hover": "#4580f0", "accent_soft": "#142240",
+                "accent_text": "#8fb0ff", "on_accent": "#ffffff",
+                "up": "#16c784", "down": "#ea3943", "warn": "#e0a43a",
+                "scroll": "#2d3545",
             },
             "light": {
-                "bg": "#f3f5f9", "surface": "#ffffff", "raised": "#f7f8fb",
-                "hover": "#eef1f7", "border": "#e2e6ee", "border_strong": "#cfd5e1",
-                "text": "#111827", "muted": "#5b6577", "faint": "#8a93a5",
-                "accent": "#4f5ff5", "accent_hover": "#3f4fe6", "accent_soft": "#e8ebff",
-                "accent_text": "#3f4fe6", "on_accent": "#ffffff",
-                "live": "#e9a23b", "live_hover": "#d89128", "on_live": "#1a1206",
-                "stop": "#dc2626", "stop_hover": "#c81e1e",
-                "tg": "#1f88cf", "dc": "#5865f2", "danger": "#dc2626",
-                "scroll": "#cfd5e1",
+                "bg": "#f5f6f8", "surface": "#ffffff", "raised": "#f8f9fb",
+                "hover": "#eef0f4", "border": "#e1e4ea", "border_strong": "#cdd2db",
+                "text": "#111622", "muted": "#5a6373", "faint": "#8b93a3",
+                "accent": "#2459d6", "accent_hover": "#1d4cc0", "accent_soft": "#e7eefc",
+                "accent_text": "#1d4cc0", "on_accent": "#ffffff",
+                "up": "#0e9f6e", "down": "#d92d3a", "warn": "#b7791f",
+                "scroll": "#cdd2db",
             },
         }
 
@@ -4640,72 +5035,72 @@ QWidget {
     font-size: 13px;
 }
 QWidget:disabled { color: $faint; }
-QToolTip { background: $raised; color: $text; border: 1px solid $border_strong; border-radius: 6px; padding: 5px 8px; }
+QToolTip { background: $raised; color: $text; border: 1px solid $border_strong; border-radius: 4px; padding: 4px 8px; }
 
-QTextEdit, QTableWidget, QTimeEdit, QLabel#stat_chip, QLabel#fng_chip {
+QTextEdit, QTableWidget, QTimeEdit {
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'DejaVu Sans Mono', monospace;
 }
 
-QFrame#header, QFrame#sidebar, QFrame#content_card {
-    background: $surface;
-    border: 1px solid $border;
-    border-radius: 14px;
-}
 QWidget#app_root { background: $bg; }
+QFrame#header { background: $surface; border: none; border-bottom: 1px solid $border; }
+QFrame#sidebar { background: $surface; border: none; border-right: 1px solid $border; }
+QFrame#content_card { background: $bg; border: none; }
+QFrame#statusbar { background: $surface; border: none; border-top: 1px solid $border; }
 QDialog, QMessageBox, QInputDialog, QFileDialog { background: $surface; }
-QMenu { background: $raised; border: 1px solid $border_strong; border-radius: 8px; padding: 4px; }
-QMenu::item { padding: 6px 14px; border-radius: 6px; }
+QMenu { background: $raised; border: 1px solid $border_strong; border-radius: 4px; padding: 4px; }
+QMenu::item { padding: 6px 14px; border-radius: 3px; }
 QMenu::item:selected { background: $accent_soft; color: $accent_text; }
 
 QLabel { color: $text; font-size: 13px; }
 QLabel#logo_badge {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 $accent, stop:1 $accent_hover);
-    color: $on_accent; border-radius: 10px; font-size: 17px; font-weight: 800;
+    background: $accent; color: $on_accent; border-radius: 6px;
+    font-size: 12px; font-weight: 800; letter-spacing: 0.02em;
 }
-QLabel#title_label { font-size: 16px; font-weight: 700; color: $text; }
+QLabel#title_label { font-size: 15px; font-weight: 700; color: $text; }
 QLabel#subtitle_label { font-size: 11px; color: $muted; }
-QLabel#section_label { font-size: 10px; font-weight: 700; color: $faint; letter-spacing: 0.12em; padding: 0 2px; }
-QLabel#stat_chip, QLabel#fng_chip {
-    background: $raised;
-    border: 1px solid $border;
-    border-radius: 8px;
-    padding: 5px 10px;
-    font-size: 11px;
-    color: $text;
-    font-weight: 600;
-}
+QLabel#section_label { font-size: 10px; font-weight: 700; color: $faint; letter-spacing: 0.1em; padding: 0 2px; }
+QFrame#kpi { border: none; border-left: 1px solid $border; }
+QLabel#kpi_caption { font-size: 10px; font-weight: 700; color: $faint; letter-spacing: 0.08em; }
+QLabel#kpi_value { font-size: 14px; font-weight: 600; color: $text; }
 QLabel#stat_chip_dim { font-size: 11px; color: $muted; padding: 3px 4px; }
-QLabel#status_label  { font-size: 11px; color: $muted; padding: 1px 4px; }
-QLabel#summary_panel {
-    background: $raised; border: 1px solid $border; border-radius: 10px; padding: 10px 12px;
+QLabel#status_label  { font-size: 11px; color: $muted; padding: 1px 2px; }
+QLabel#status_text { font-size: 11px; color: $muted; }
+QPushButton#update_badge {
+    background: $accent_soft; color: $accent_text; border: 1px solid $accent;
+    border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 600;
 }
-QPushButton#compact_btn { padding: 7px 4px; font-size: 11px; }
+QPushButton#update_badge:hover { background: $accent; color: $on_accent; }
+QPushButton::menu-indicator { subcontrol-position: right center; right: 6px; }
+QLabel#summary_panel {
+    background: $bg; border: 1px solid $border; border-radius: 6px; padding: 10px 12px;
+}
+QPushButton#compact_btn { padding: 6px 4px; font-size: 11px; }
 QLabel#live_status { font-size: 11px; color: $muted; }
-QFrame#live_box { background: $raised; border: 1px solid $border; border-radius: 10px; }
 
 QScrollArea { border: none; background: transparent; }
 
 QListWidget, QTextEdit {
     background-color: $bg;
     border: 1px solid $border;
-    border-radius: 10px;
-    padding: 6px;
+    border-radius: 6px;
+    padding: 4px;
     color: $text;
     selection-background-color: $accent;
     selection-color: $on_accent;
     font-size: 12px;
 }
-QListWidget#asset_list { font-size: 13px; padding: 4px; }
-QListWidget::item { padding: 7px 10px; border-radius: 7px; margin: 1px 0; }
-QListWidget::item:selected { background: $accent_soft; color: $accent_text; font-weight: 600; }
+QTextEdit { background-color: $surface; }
+QListWidget#asset_list { font-size: 13px; padding: 2px; }
+QListWidget::item { padding: 6px 10px; border-radius: 4px; margin: 0; }
+QListWidget::item:selected { background: $accent_soft; color: $text; }
 QListWidget::item:hover:!selected { background: $hover; }
 
 QLineEdit, QTimeEdit {
     background: $bg;
     color: $text;
     border: 1px solid $border;
-    border-radius: 9px;
-    padding: 7px 11px;
+    border-radius: 6px;
+    padding: 6px 10px;
     font-size: 13px;
     selection-background-color: $accent;
     selection-color: $on_accent;
@@ -4717,8 +5112,8 @@ QComboBox {
     background: $bg;
     color: $text;
     border: 1px solid $border;
-    border-radius: 9px;
-    padding: 6px 11px;
+    border-radius: 6px;
+    padding: 5px 10px;
 }
 QComboBox:hover { border-color: $border_strong; }
 QComboBox:focus { border: 1px solid $accent; }
@@ -4726,11 +5121,11 @@ QComboBox::drop-down { border: none; padding-right: 6px; }
 QComboBox QAbstractItemView {
     background: $raised;
     border: 1px solid $border_strong;
-    border-radius: 8px;
+    border-radius: 4px;
     color: $text;
-    padding: 4px;
+    padding: 2px;
     selection-background-color: $accent_soft;
-    selection-color: $accent_text;
+    selection-color: $text;
     outline: 0;
 }
 
@@ -4741,82 +5136,79 @@ QTabBar#nav_tabs::tab {
     border: none;
     border-bottom: 2px solid transparent;
     padding: 10px 14px 9px 14px;
-    margin-right: 2px;
+    margin-right: 0;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
 }
-QTabBar#nav_tabs::tab:hover { color: $text; border-bottom: 2px solid $border_strong; }
+QTabBar#nav_tabs::tab:hover { color: $text; }
 QTabBar#nav_tabs::tab:selected { color: $text; border-bottom: 2px solid $accent; }
-QTabBar QToolButton { background: $raised; border: 1px solid $border; border-radius: 6px; }
+QTabBar QToolButton { background: $raised; border: 1px solid $border; border-radius: 4px; }
+QFrame#tab_rule { background: $border; border: none; max-height: 1px; min-height: 1px; }
 
 QPushButton {
     background: $raised;
     color: $text;
     border: 1px solid $border;
-    border-radius: 9px;
-    padding: 7px 14px;
+    border-radius: 6px;
+    padding: 6px 12px;
     font-weight: 600;
     font-size: 12px;
 }
 QPushButton:hover { background: $hover; border-color: $border_strong; }
-QPushButton:pressed { background: $accent_soft; border-color: $accent; color: $accent_text; }
+QPushButton:pressed { background: $accent_soft; border-color: $accent; }
 QPushButton:focus { border: 1px solid $accent; }
 
 QPushButton#ghost_btn {
     background: transparent;
     border: 1px solid transparent;
     color: $muted;
-    padding: 5px 10px;
+    padding: 3px 8px;
+    font-weight: 500;
+    font-size: 11px;
 }
 QPushButton#ghost_btn:hover { background: $hover; color: $text; }
 
 QPushButton#primary_btn {
     background: $accent;
     color: $on_accent;
-    border: none;
+    border: 1px solid $accent;
     font-size: 13px;
-    padding: 10px 22px;
-    border-radius: 10px;
+    padding: 8px 20px;
+    border-radius: 6px;
     font-weight: 700;
 }
-QPushButton#primary_btn:hover { background: $accent_hover; }
+QPushButton#primary_btn:hover { background: $accent_hover; border-color: $accent_hover; }
 QPushButton#primary_btn:pressed { background: $accent_hover; }
-QPushButton#primary_btn:focus { border: 2px solid $accent_text; }
 
 QPushButton#live_btn {
-    background: transparent;
-    color: $live;
-    border: 1px solid $live;
+    background: $raised;
+    color: $text;
+    border: 1px solid $border_strong;
     font-size: 13px;
-    padding: 9px 18px;
-    border-radius: 10px;
-    font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
 }
-QPushButton#live_btn:hover { background: $live; color: $on_live; }
-QPushButton#live_btn:pressed { background: $live_hover; color: $on_live; }
+QPushButton#live_btn:hover { background: $hover; }
 
 QPushButton#live_btn_active {
-    background: $stop;
-    color: #ffffff;
-    border: none;
+    background: transparent;
+    color: $down;
+    border: 1px solid $down;
     font-size: 13px;
-    padding: 10px 18px;
-    border-radius: 10px;
-    font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
 }
-QPushButton#live_btn_active:hover { background: $stop_hover; }
+QPushButton#live_btn_active:hover { background: $down; color: #ffffff; }
 
-QPushButton#telegram_btn { color: $tg; }
-QPushButton#telegram_btn:hover { background: $tg; color: #ffffff; border-color: $tg; }
-QPushButton#discord_btn { color: $dc; }
-QPushButton#discord_btn:hover { background: $dc; color: #ffffff; border-color: $dc; }
-QPushButton#danger_btn { color: $danger; }
-QPushButton#danger_btn:hover { background: $danger; color: #ffffff; border-color: $danger; }
+QPushButton#danger_btn { color: $down; }
+QPushButton#danger_btn:hover { background: $down; color: #ffffff; border-color: $down; }
 
 QPushButton#chip {
     background: transparent; color: $muted;
     border: 1px solid $border;
-    border-radius: 8px; padding: 5px 6px;
+    border-radius: 4px; padding: 4px 4px;
     font-size: 11px; font-weight: 600;
 }
 QPushButton#chip:hover { background: $hover; color: $text; }
@@ -4824,37 +5216,39 @@ QPushButton#chip_active {
     background: $accent_soft;
     color: $accent_text;
     border: 1px solid $accent;
-    border-radius: 8px; padding: 5px 6px;
+    border-radius: 4px; padding: 4px 4px;
     font-size: 11px; font-weight: 700;
 }
 
 QCheckBox { color: $text; font-size: 13px; spacing: 8px; }
 QCheckBox::indicator {
-    width: 16px; height: 16px;
+    width: 14px; height: 14px;
     border: 1px solid $border_strong;
-    border-radius: 5px;
+    border-radius: 3px;
     background: $bg;
 }
 QCheckBox::indicator:hover { border-color: $accent; }
 QCheckBox::indicator:checked { background: $accent; border-color: $accent; }
 
 QTableWidget {
-    background: $bg;
+    background: $surface;
     gridline-color: $border;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 6px;
     color: $text;
     alternate-background-color: $raised;
+    font-size: 12px;
 }
-QTableWidget::item:selected { background: $accent_soft; color: $accent_text; }
+QTableWidget::item { padding: 2px 6px; }
+QTableWidget::item:selected { background: $accent_soft; color: $text; }
 QHeaderView::section {
     background: $raised;
     color: $muted;
-    padding: 8px 9px;
+    padding: 7px 8px;
     border: none;
     border-bottom: 1px solid $border;
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
 }
 QTableCornerButton::section { background: $raised; border: none; }
 
@@ -4872,27 +5266,27 @@ QSplitter::handle { background: $border; }
 
 QGroupBox#settings_group {
     border: 1px solid $border;
-    border-radius: 12px;
-    margin-top: 14px;
+    border-radius: 6px;
+    margin-top: 22px;
     padding-top: 10px;
     background: $surface;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: $muted;
 }
 QGroupBox#settings_group::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px; padding: 0 6px;
-    color: $text;
+    left: 2px; padding: 0 0 4px 0;
+    color: $muted;
 }
 
 QProgressBar#analysis_progress {
     background: $raised;
-    border: none; border-radius: 2px;
-    max-height: 4px; min-height: 4px;
+    border: none; border-radius: 1px;
+    max-height: 3px; min-height: 3px;
 }
-QProgressBar#analysis_progress::chunk { background: $accent; border-radius: 2px; }
+QProgressBar#analysis_progress::chunk { background: $accent; border-radius: 1px; }
 
 QFrame[frameShape="4"] { color: $border; }
 
@@ -4936,6 +5330,7 @@ QFrame[frameShape="4"] { color: $border; }
                     self.favorite_names.add(n)
             save_favorites(sorted(self.favorite_names))
             self.log_alert(f"Kedvencek frissítve: {len(self.favorite_names)} db")
+            self.list_widget.viewport().update()
 
         def schedule_tick(self):
             if not self.cb_schedule_analysis.isChecked():
@@ -4998,13 +5393,13 @@ QFrame[frameShape="4"] { color: $border; }
             try:
                 value = float(raw)
             except ValueError:
-                self.log_alert("❌ Érvénytelen érték a riasztási szabályhoz.")
+                self.log_alert("Érvénytelen érték a riasztási szabályhoz.")
                 return
             self.custom_rules.append({"asset": asset, "rule": cond_key, "value": value})
             save_custom_alert_rules(self.custom_rules)
             self.refresh_rules_table()
             self.rule_value_edit.clear()
-            self.log_alert(f"✅ Riasztási szabály hozzáadva: {asset} {cond_key} {value}")
+            self.log_alert(f"Riasztási szabály hozzáadva: {asset} {cond_key} {value}")
 
         def remove_selected_rule(self):
             rows = sorted({i.row() for i in self.rules_table.selectedItems()}, reverse=True)
@@ -5016,7 +5411,7 @@ QFrame[frameShape="4"] { color: $border; }
                     del self.custom_rules[r]
             save_custom_alert_rules(self.custom_rules)
             self.refresh_rules_table()
-            self.log_alert(f"🗑 {len(rows)} szabály törölve.")
+            self.log_alert(f"{len(rows)} szabály törölve.")
 
         def export_html_report(self):
             if not self._last_results:
@@ -5091,9 +5486,9 @@ QFrame[frameShape="4"] { color: $border; }
                             "deploy_amount": inv.get("deploy_amount", ""),
                             "deploy_frac": inv.get("deploy_frac", ""),
                         })
-                self.log_alert(f"✅ CSV exportálva: {path} ({len(self._last_results)} sor)")
+                self.log_alert(f"CSV exportálva: {path} ({len(self._last_results)} sor)")
             except OSError as e:
-                self.log_alert(f"❌ CSV exportálási hiba: {e}")
+                self.log_alert(f"CSV exportálási hiba: {e}")
 
         def refresh_correlation_view(self):
             items = self.selected_asset_items()
@@ -5356,7 +5751,7 @@ QFrame[frameShape="4"] { color: $border; }
 
             except Exception as e:
                 self.candle_widget.set_data([], [], f"Diagram hiba: {e}")
-                self.chart_subtitle.setText(f"⚠ Diagram hiba — {e}")
+                self.chart_subtitle.setText(f"Diagram hiba — {e}")
 
         def output_clear(self):
             self.output.clear()
@@ -5368,7 +5763,7 @@ QFrame[frameShape="4"] { color: $border; }
             selected = len(self.list_widget.selectedItems())
             if selected == 0:
                 selected = len(ASSETS)
-            self.stats_assets.setText(f"Kivalasztva: {selected}")
+            self.stats_assets.setText(f"{selected} <span style='font-size:11px;color:#8b93a1;font-weight:400'>/ {len(ASSETS)}</span>")
             if hasattr(self, "summary_panel"):
                 self.update_summary_panel()
 
@@ -5377,49 +5772,33 @@ QFrame[frameShape="4"] { color: $border; }
             if not hasattr(self, "summary_panel"):
                 return
             tk = self.THEME_TOKENS["dark" if self._theme == "dark" else "light"]
-            txt_col = tk["text"]
-            dim = tk["muted"]
+            txt_col, dim, up, down = tk["text"], tk["muted"], tk["up"], tk["down"]
+
+            def kv(k, v):
+                return (f"<tr><td style='color:{dim};padding:2px 12px 2px 0'>{k}</td>"
+                        f"<td align='right' style='padding:2px 0'>{v}</td></tr>")
 
             sel = len(self.list_widget.selectedItems()) or len(ASSETS)
-            rows = [f"<b style='font-size:12px'>📊 Áttekintés</b>",
-                    f"<span style='color:{dim}'>Kiválasztva:</span> <b>{sel}</b> eszköz"]
-
+            rows = [kv("Kijelölve", f"<b>{sel}</b> eszköz")]
             if self._fng_value is not None:
-                rows.append(
-                    f"<span style='color:{dim}'>Fear &amp; Greed:</span> "
-                    f"<b>{self._fng_value}</b> <span style='color:{dim}'>({html.escape(self._fng_label)})</span>"
-                )
+                rows.append(kv("Fear &amp; Greed",
+                               f"<b>{self._fng_value}</b> <span style='color:{dim}'>{html.escape(self._fng_label)}</span>"))
             if self.holdings:
-                rows.append(f"<span style='color:{dim}'>Portfólió:</span> <b>{len(self.holdings)}</b> pozíció")
-
+                rows.append(kv("Portfólió", f"<b>{len(self.holdings)}</b> pozíció"))
             res = [r for r in self._last_results if r.get("day_change_pct") is not None]
             if res:
                 ordered = sorted(res, key=lambda r: r["day_change_pct"], reverse=True)
                 top = ordered[0]
-                rows.append(
-                    f"<span style='color:{dim}'>🔼 Top:</span> {html.escape(top['name'])} "
-                    f"<b style='color:#22c55e'>{top['day_change_pct']:+.2f}%</b>"
-                )
+                rows.append(kv("Legjobb", f"{html.escape(top['name'])} "
+                                          f"<b style='color:{up if top['day_change_pct'] >= 0 else down}'>{top['day_change_pct']:+.2f}%</b>"))
                 if len(ordered) > 1:
                     bot = ordered[-1]
-                    rows.append(
-                        f"<span style='color:{dim}'>🔽 Alja:</span> {html.escape(bot['name'])} "
-                        f"<b style='color:#ef4444'>{bot['day_change_pct']:+.2f}%</b>"
-                    )
-            if self._last_results:
-                buy = sum(1 for r in self._last_results if "📈" in r["decision"])
-                sell = sum(1 for r in self._last_results if "⚠️" in r["decision"])
-                wait = max(0, len(self._last_results) - buy - sell)
-                rows.append(
-                    f"<span style='color:{dim}'>Jelzések:</span> "
-                    f"<b style='color:#22c55e'>{buy}</b> / "
-                    f"<b style='color:#ef4444'>{sell}</b> / "
-                    f"<b style='color:#f59e0b'>{wait}</b>"
-                )
-
-            body = "<br>".join(rows)
+                    rows.append(kv("Leggyengébb", f"{html.escape(bot['name'])} "
+                                                  f"<b style='color:{up if bot['day_change_pct'] >= 0 else down}'>{bot['day_change_pct']:+.2f}%</b>"))
             self.summary_panel.setText(
-                f"<div style='font-size:12px;color:{txt_col};line-height:1.6'>{body}</div>"
+                f"<div style='font-size:10px;font-weight:700;color:{tk['faint']};letter-spacing:1px'>ÁTTEKINTÉS</div>"
+                f"<table width='100%' cellspacing='0' cellpadding='0' style='font-size:12px;color:{txt_col};margin-top:6px'>"
+                f"{''.join(rows)}</table>"
             )
 
         def toggle_auto_clear(self, checked):
@@ -5477,7 +5856,7 @@ QFrame[frameShape="4"] { color: $border; }
             if prov.startswith("Claude helyi"):
                 self.ai_provider = "claude_cli"
                 if not shutil.which("claude"):
-                    self.log_alert("⚠️ A 'claude' parancs nem található — telepítsd a Claude Code-ot.")
+                    self.log_alert("A 'claude' parancs nem található — telepítsd a Claude Code-ot.")
                 model, ok2 = QInputDialog.getText(
                     self, "Claude modell (helyi CLI)",
                     "Modell (üresen hagyva a Claude Code alapját használja,\n"
@@ -5636,47 +6015,47 @@ QFrame[frameShape="4"] { color: $border; }
                 ok, err = send_telegram_message(
                     self.telegram_bot_token,
                     self.telegram_chat_id,
-                    "🤖 <b>AI Eszközelemző Pro</b>\n✅ Telegram kapcsolat aktív és működik!",
+                    "🤖 <b>AI Crypto Tracker</b>\n✅ Telegram kapcsolat aktív és működik!",
                 )
                 if ok:
-                    self.log_alert("✅ Telegram tesztüzenet elküldve.")
+                    self.log_alert("Telegram tesztüzenet elküldve.")
                 else:
-                    self.log_alert(f"❌ Telegram hiba: {err}")
+                    self.log_alert(f"Telegram hiba: {err}")
 
         def send_telegram_test(self):
             """Send a standalone test message to Telegram."""
             if not self.telegram_enabled:
-                self.log_alert("❌ Telegram nincs beállítva. Először konfiguráld.")
+                self.log_alert("Telegram nincs beállítva. Először konfiguráld.")
                 return
             msg = (
-                "🤖 <b>AI Eszközelemző Pro – Tesztüzenet</b>\n"
+                "🤖 <b>AI Crypto Tracker – Tesztüzenet</b>\n"
                 f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
                 "✅ Kapcsolat rendben."
             )
             ok, err = send_telegram_message(self.telegram_bot_token, self.telegram_chat_id, msg)
             if ok:
-                self.log_alert("✅ Telegram tesztüzenet elküldve.")
+                self.log_alert("Telegram tesztüzenet elküldve.")
             else:
-                self.log_alert(f"❌ Telegram hiba: {err}")
+                self.log_alert(f"Telegram hiba: {err}")
 
         def send_telegram_full_report(self):
             """Send the last analysis results to Telegram as formatted messages."""
             if not self.telegram_enabled:
-                self.log_alert("❌ Telegram nincs beállítva. Először konfiguráld.")
+                self.log_alert("Telegram nincs beállítva. Először konfiguráld.")
                 return
             if not self._last_results:
-                self.log_alert("❌ Nincs elemzési eredmény. Futtass elemzést előbb.")
+                self.log_alert("Nincs elemzési eredmény. Futtass elemzést előbb.")
                 return
             _, currency, _ = self.resolve_rate_currency()
             header = (
-                f"📊 <b>AI Eszközelemző Pro – Elemzési Riport</b>\n"
+                f"📊 <b>AI Crypto Tracker – Elemzési Riport</b>\n"
                 f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
                 f"💱 Deviza: <b>{html.escape(currency)}</b>\n"
                 f"📋 Eszközök: <b>{len(self._last_results)}</b>"
             )
             ok, err = send_telegram_message(self.telegram_bot_token, self.telegram_chat_id, header)
             if not ok:
-                self.log_alert(f"❌ Telegram fejléc hiba: {err}")
+                self.log_alert(f"Telegram fejléc hiba: {err}")
                 return
             sent, failed = 0, 0
             for result in self._last_results:
@@ -5686,9 +6065,9 @@ QFrame[frameShape="4"] { color: $border; }
                     sent += 1
                 else:
                     failed += 1
-                    self.log_alert(f"❌ Telegram küldési hiba ({result.get('name')}): {err}")
+                    self.log_alert(f"Telegram küldési hiba ({result.get('name')}): {err}")
                 time.sleep(0.3)
-            self.log_alert(f"📊 Riport elküldve: {sent} sikeres, {failed} hibás.")
+            self.log_alert(f"Riport elküldve: {sent} sikeres, {failed} hibás.")
 
         def refresh_discord_status(self):
             if self.discord_enabled and self.discord_webhook_url:
@@ -5716,25 +6095,25 @@ QFrame[frameShape="4"] { color: $border; }
                 ok, err = send_discord_message(
                     self.discord_webhook_url,
                     embeds=[{
-                        "title": "🤖 AI Eszközelemző Pro",
+                        "title": "🤖 AI Crypto Tracker",
                         "description": "✅ Discord kapcsolat aktív és működik!",
                         "color": DISCORD_COLOR_INFO,
                     }],
                 )
                 if ok:
-                    self.log_alert("✅ Discord tesztüzenet elküldve.")
+                    self.log_alert("Discord tesztüzenet elküldve.")
                 else:
-                    self.log_alert(f"❌ Discord hiba: {err}")
+                    self.log_alert(f"Discord hiba: {err}")
 
         def send_discord_test(self):
             """Send a standalone test message to Discord."""
             if not self.discord_enabled:
-                self.log_alert("❌ Discord nincs beállítva. Először konfiguráld.")
+                self.log_alert("Discord nincs beállítva. Először konfiguráld.")
                 return
             ok, err = send_discord_message(
                 self.discord_webhook_url,
                 embeds=[{
-                    "title": "🤖 AI Eszközelemző Pro – Tesztüzenet",
+                    "title": "🤖 AI Crypto Tracker – Tesztüzenet",
                     "description": (
                         f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
                         "✅ Kapcsolat rendben."
@@ -5743,27 +6122,27 @@ QFrame[frameShape="4"] { color: $border; }
                 }],
             )
             if ok:
-                self.log_alert("✅ Discord tesztüzenet elküldve.")
+                self.log_alert("Discord tesztüzenet elküldve.")
             else:
-                self.log_alert(f"❌ Discord hiba: {err}")
+                self.log_alert(f"Discord hiba: {err}")
 
         def send_discord_full_report(self):
             """Send the last analysis results to Discord as formatted embeds."""
             if not self.discord_enabled:
-                self.log_alert("❌ Discord nincs beállítva. Először konfiguráld.")
+                self.log_alert("Discord nincs beállítva. Először konfiguráld.")
                 return
             if not self._last_results:
-                self.log_alert("❌ Nincs elemzési eredmény. Futtass elemzést előbb.")
+                self.log_alert("Nincs elemzési eredmény. Futtass elemzést előbb.")
                 return
             _, currency, _ = self.resolve_rate_currency()
             header = (
-                "📊 **AI Eszközelemző Pro – Elemzési Riport**\n"
+                "📊 **AI Crypto Tracker – Elemzési Riport**\n"
                 f"🕐 {QDateTime.currentDateTime().toString('yyyy-MM-dd HH:mm:ss')}\n"
                 f"💱 Deviza: **{currency}**  ·  📋 Eszközök: **{len(self._last_results)}**"
             )
             ok, err = send_discord_message(self.discord_webhook_url, content=header)
             if not ok:
-                self.log_alert(f"❌ Discord fejléc hiba: {err}")
+                self.log_alert(f"Discord fejléc hiba: {err}")
                 return
             sent, failed = 0, 0
             embeds = [format_discord_result_embed(r, currency) for r in self._last_results]
@@ -5774,9 +6153,9 @@ QFrame[frameShape="4"] { color: $border; }
                     sent += len(batch)
                 else:
                     failed += len(batch)
-                    self.log_alert(f"❌ Discord küldési hiba: {err}")
+                    self.log_alert(f"Discord küldési hiba: {err}")
                 time.sleep(0.5)
-            self.log_alert(f"📊 Discord riport elküldve: {sent} sikeres, {failed} hibás.")
+            self.log_alert(f"Discord riport elküldve: {sent} sikeres, {failed} hibás.")
 
         def trigger_alert_channels(self, message):
             notify_price_change("Pro riasztás", message)
@@ -5790,64 +6169,58 @@ QFrame[frameShape="4"] { color: $border; }
                     tg_msg,
                 )
                 if not ok:
-                    self.log_alert(f"❌ Telegram küldés sikertelen: {err}")
+                    self.log_alert(f"Telegram küldés sikertelen: {err}")
             if self.discord_enabled:
                 ok, err = send_discord_message(
                     self.discord_webhook_url,
                     embeds=[format_discord_alert_embed(message)],
                 )
                 if not ok:
-                    self.log_alert(f"❌ Discord küldés sikertelen: {err}")
+                    self.log_alert(f"Discord küldés sikertelen: {err}")
 
         def log_alert(self, text):
             now_text = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
             self.alert_output.append(f"[{now_text}] {text}")
 
         def update_decision_stats(self, results):
-            buy_keywords = {"📈"}
-            sell_keywords = {"⚠️"}
             buy = sum(1 for r in results if "📈" in r["decision"])
             sell = sum(1 for r in results if "⚠️" in r["decision"])
             wait = max(0, len(results) - buy - sell)
+            sep = "<span style='color:#5a6271'> · </span>"
             self.stats_decisions.setText(
-                self.tr_("signals", b=buy, s=sell, w=wait)
+                f"<span style='color:#16c784'>{buy}</span>{sep}"
+                f"<span style='color:#ea3943'>{sell}</span>{sep}"
+                f"<span style='color:#e0a43a'>{wait}</span>"
             )
-            if buy > sell:
-                color = "#22c55e"
-            elif sell > buy:
-                color = "#ef4444"
-            else:
-                color = "#f59e0b"
-            self.stats_decisions.setStyleSheet(f"color: {color}; font-weight: 700;")
 
         def update_portfolio_tab(self, results, currency):
             if not results:
                 self.portfolio_output.setPlainText("Nincs portfolio adat.")
                 return
-            total_current = sum(float(r["current"]) for r in results)
-            total_future = sum(float(r["future"]) for r in results)
+            tk = self.THEME_TOKENS["dark" if self._theme == "dark" else "light"]
+            dim = tk["muted"]
             avg_prob = sum(float(r["next_up_prob"]) for r in results) / len(results)
             total_deploy = sum(float(r["investment"]["deploy_amount"]) for r in results if r.get("investment"))
             total_input = sum(float(r["investment"]["amount"]) for r in results if r.get("investment"))
-            lines = [
-                "Portfolio osszegzes",
-                "=" * 40,
-                f"Eszkozok szama: {len(results)}",
-                f"Ossz jelenlegi ertek (indikativ): {total_current:,.2f} {currency}",
-                f"Ossz AI celar (1 ora): {total_future:,.2f} {currency}",
-                f"Atlagos AI fel-valoszinuseg: {avg_prob * 100:.1f}%",
-                f"Osszesitett javasolt tet: {total_deploy:,.2f} {currency}",
+            held = [r for r in results if (r.get("holding_qty") or 0) > 0]
+            total_value = sum(float(r["holding_qty"]) * float(r["current"]) for r in held)
+            items = [
+                ("Elemzett eszközök", f"{len(results)}"),
+                ("Portfólió érték (tartott)", f"{_fmt_price(total_value)} {currency}" if held else "–"),
+                ("Átlagos AI fel-valószínűség", f"{avg_prob * 100:.1f}%"),
+                ("Összesített javasolt tét", f"{_fmt_price(total_deploy)} {currency}"),
             ]
             if total_input > 0:
-                lines.append(f"Kitettseg arany: {(total_deploy / total_input) * 100:.1f}%")
-            lines.append("")
-            lines.append("Eszkozonkenti gyorsnezet:")
-            for r in results:
-                lines.append(
-                    f"- {r['name']}: {r['decision']} | Most: {r['current']:,.2f} {currency} | "
-                    f"AI fel: {r['next_up_prob'] * 100:.1f}%"
-                )
-            self.portfolio_output.setPlainText("\n".join(lines))
+                items.append(("Kitettségi arány", f"{(total_deploy / total_input) * 100:.1f}%"))
+            cells = "".join(
+                f"<td style='padding:2px 28px 2px 0'><span style='color:{dim};font-size:10px'>{html.escape(k.upper())}</span>"
+                f"<br><b style='font-size:13px'>{html.escape(v)}</b></td>"
+                for k, v in items
+            )
+            self.portfolio_output.setHtml(
+                f"<div style=\"font-family:'Inter','Segoe UI',sans-serif;color:{tk['text']}\">"
+                f"<table cellspacing='0' cellpadding='0'><tr>{cells}</tr></table></div>"
+            )
 
         def set_invest_amount(self):
             rate, currency, _ = self.resolve_rate_currency()
@@ -5933,7 +6306,7 @@ QFrame[frameShape="4"] { color: $border; }
             has_huf = rate_warning is None and currency == "HUF"
             fx_ctx = get_usdhuf_vs_ma20()
             now_text = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss")
-            self.stats_update.setText(now_text)
+            self.stats_update.setText(self.tr_("last_update", t=now_text))
 
             assets_to_run = self.selected_asset_items()
             total = len(assets_to_run)
@@ -6036,11 +6409,11 @@ QFrame[frameShape="4"] { color: $border; }
                 except Exception as e:
                     import traceback as _tb
                     err_detail = _tb.format_exc()
-                    dim = "#9ca3af" if dark else "#6b7280"
+                    pal = _report_palette(dark)
+                    dim = pal["dim"]
                     html_parts.append(
-                        f'<div style="margin:4px 2px;padding:8px 14px;'
-                        f'border-left:3px solid #ef4444;color:{dim}">'
-                        f'<b style="color:#ef4444">⚠ {html.escape(name)}</b>: '
+                        f'<div style="margin:4px 2px;padding:8px 14px;color:{dim}">'
+                        f'<b style="color:{pal["down"]}">{html.escape(name)}</b>: '
                         f'{html.escape(str(e))}'
                         f'<br><span style="font-size:10px;color:{dim}">'
                         f'{html.escape(err_detail[:400])}</span></div>'
@@ -6050,15 +6423,13 @@ QFrame[frameShape="4"] { color: $border; }
                     self.analysis_info_label.setText(f"{idx + 1} / {total}")
                     QApplication.processEvents()
 
-            wrapper_bg = "#0d1117" if dark else "#f6f8fa"
-            self.output.setHtml(
-                f'<div style="background:{wrapper_bg};padding:4px">{"".join(html_parts)}</div>'
-            )
+            overview = format_results_overview_html(results, currency=currency, dark=dark) if len(results) > 1 else ""
+            self.output.setHtml(f'<div style="padding:2px">{overview}{"".join(html_parts)}</div>')
             self.progress_bar.setVisible(False)
             if hasattr(self, "_shimmer"):
                 self._shimmer.stop()
             self._fade_in_output()
-            self.analysis_info_label.setText(f"✓ {len(results)} eszköz")
+            self.analysis_info_label.setText(f"{len(results)} / {total} eszköz elemezve")
 
             if results:
                 self._last_results = results

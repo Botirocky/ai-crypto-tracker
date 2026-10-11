@@ -36,6 +36,25 @@ Frissítéshez elég újra futtatni a `./telepites.sh`-t.
 ./run-tracker.sh --cli      # parancssori elemzés
 ```
 
+## Frissítés
+
+A program a GitHub-kiadások alapján frissül: **Menü → Frissítések keresése…**
+Induláskor csendben is ellenőriz (kikapcsolható: Beállítások → Általános), és ha van új
+verzió, az állapotsorban megjelenik az „Új verzió” jelzés.
+
+- Linux / forrásból: letölti a kiadáshoz csatolt `ai-crypto-tracker.py`-t, ellenőrzi,
+  a régit elmenti ide: `~/.config/ai-cripto-tracker/backup/`, majd újraindítást ajánl.
+- Windows: letölti és elindítja a kiadáshoz csatolt telepítőt (`*telepito*.exe`),
+  ha nincs ilyen, megnyitja a kiadás oldalát.
+- Git-másolatból futtatva `git pull --ff-only`-t ajánl.
+
+Kiadás készítése (verzióemelés, tag, GitHub-kiadás a `.py` csatolásával):
+
+```bash
+./kiadas.sh --javitas -m "Mi változott"   # 2.0.0 → 2.0.1
+./kiadas.sh --funkcio -m "Mi változott"   # 2.0.0 → 2.1.0
+```
+
 ## Adatok helye
 
 Minden beállítás, előzmény és az élő mód CSV-je itt van:
