@@ -1,6 +1,6 @@
 #define AppName "AI Crypto Tracker"
 #define AppExe "AI-Crypto-Tracker.exe"
-#define AppVersion "2.0.0"
+#define AppVersion "2.0.1"
 #define BuildDir "..\dist\AI-Crypto-Tracker"
 
 [Setup]
