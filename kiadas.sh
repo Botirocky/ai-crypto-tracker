@@ -66,5 +66,10 @@ git push -q origin "v$NEW"
 ok "Feltöltve: main + v$NEW."
 
 [[ -n "$NOTES" ]] || NOTES="AI Crypto Tracker v$NEW"
+if [[ -f docs/screenshot.png ]]; then
+    NOTES="![AI Crypto Tracker](https://raw.githubusercontent.com/Botirocky/ai-crypto-tracker/main/docs/screenshot.png)
+
+$NOTES"
+fi
 gh release create "v$NEW" "$PY" --title "AI Crypto Tracker v$NEW" --notes "$NOTES" --latest
 ok "GitHub-kiadás kész: v$NEW – a telepített programok a Menü → Frissítések keresése alatt megtalálják."
