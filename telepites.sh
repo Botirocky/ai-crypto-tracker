@@ -87,6 +87,7 @@ install_app() {
     mkdir -p "$INSTALL_DIR/assets"
     install -m 644 "$SRC_DIR/ai-crypto-tracker.py" "$INSTALL_DIR/ai-crypto-tracker.py"
     install -m 644 "$SRC_DIR/requirements.txt" "$INSTALL_DIR/requirements.txt"
+    [[ -f "$SRC_DIR/discordbot.zip" ]] && install -m 644 "$SRC_DIR/discordbot.zip" "$INSTALL_DIR/discordbot.zip"
     install -m 644 "$SRC_DIR/assets/icon.png" "$SRC_DIR/assets/icon.svg" "$INSTALL_DIR/assets/"
     ok "Kész."
 

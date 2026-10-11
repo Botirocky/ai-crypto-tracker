@@ -87,6 +87,7 @@ REM  --collect-*   : a scikit-learn rejtett moduljai/adatai kellenek futaskor
     --name "%APP_NAME%" ^
     --icon "assets\icon.ico" ^
     --add-data "assets;assets" ^
+    --add-data "discordbot.zip;." ^
     --collect-submodules sklearn ^
     --collect-data sklearn ^
     --hidden-import sklearn.ensemble ^

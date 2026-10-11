@@ -504,6 +504,7 @@ TRANSLATIONS = {
         "tab_correlation": "Korreláció",
         "tab_history": "Előzmények",
         "tab_news": "Hírek",
+        "tab_discord": "Discord bot",
         "tab_settings": "Beállítások",
         "copy_output": "Kimenet vágólapra",
         "analysis_placeholder": "Az elemzés eredménye itt fog megjelenni...",
@@ -633,6 +634,7 @@ TRANSLATIONS = {
         "tab_correlation": "Correlation",
         "tab_history": "History",
         "tab_news": "News",
+        "tab_discord": "Discord bot",
         "tab_settings": "Settings",
         "copy_output": "Copy output",
         "analysis_placeholder": "Analysis results will appear here...",
@@ -762,6 +764,7 @@ TRANSLATIONS = {
         "tab_correlation": "Korrelation",
         "tab_history": "Verlauf",
         "tab_news": "Nachrichten",
+        "tab_discord": "Discord-Bot",
         "tab_settings": "Einstellungen",
         "copy_output": "Ausgabe kopieren",
         "analysis_placeholder": "Analyseergebnisse erscheinen hier...",
@@ -1334,6 +1337,90 @@ def find_installer_asset(release):
         if n.endswith(".exe") and ("telepito" in n or "setup" in n):
             return a
     return None
+
+BOT_DIR = APP_STATE_DIR / "discordbot"
+BOT_ZIP_URL = f"https://raw.githubusercontent.com/{UPDATE_REPO}/main/discordbot.zip"
+BOT_ENV_KEYS = ("DISCORD_TOKEN", "GUILD_ID", "SIGNALS_CHANNEL_ID", "POLL_SECONDS", "TRACKER_DATA_DIR")
+BOT_KEEP = (".env", ".state", ".venv")
+
+def bot_python(bot_dir=BOT_DIR):
+    if sys.platform == "win32":
+        return Path(bot_dir) / ".venv" / "Scripts" / "python.exe"
+    return Path(bot_dir) / ".venv" / "bin" / "python"
+
+def bot_base_python():
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for c in ("py", "python3", "python"):
+        found = shutil.which(c)
+        if found:
+            return found
+    return None
+
+def install_bot_files(bot_dir=BOT_DIR):
+    import io
+    import zipfile
+    local = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "discordbot.zip"
+    data = local.read_bytes() if local.is_file() else _download(BOT_ZIP_URL)
+    bot_dir = Path(bot_dir)
+    bot_dir.mkdir(parents=True, exist_ok=True)
+    root = bot_dir.resolve()
+    written = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        for name in zf.namelist():
+            parts = name.split("/", 1)
+            if len(parts) != 2 or not parts[1] or name.endswith("/"):
+                continue
+            rel = parts[1]
+            if rel.split("/")[0] in BOT_KEEP or "__pycache__" in rel:
+                continue
+            dest = (bot_dir / rel).resolve()
+            if root not in dest.parents:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zf.read(name))
+            written += 1
+    if not (bot_dir / "bot.py").is_file():
+        raise ValueError("A csomagban nincs bot.py.")
+    return written
+
+def read_bot_env(bot_dir=BOT_DIR):
+    out = {}
+    f = Path(bot_dir) / ".env"
+    if f.is_file():
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+def write_bot_env(values, bot_dir=BOT_DIR):
+    bot_dir = Path(bot_dir)
+    bot_dir.mkdir(parents=True, exist_ok=True)
+    merged = read_bot_env(bot_dir)
+    merged.update({k: str(v).strip() for k, v in values.items()})
+    lines = [f"{k}={merged.get(k, '')}" for k in BOT_ENV_KEYS]
+    lines += [f"{k}={v}" for k, v in merged.items() if k not in BOT_ENV_KEYS]
+    f = bot_dir / ".env"
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        os.chmod(f, 0o600)
+    except OSError:
+        pass
+
+def bot_invite_url(token):
+    import base64
+    try:
+        first = token.split(".")[0]
+        app_id = base64.b64decode(first + "=" * (-len(first) % 4)).decode("ascii")
+        if not app_id.isdigit():
+            return None
+    except Exception:
+        return None
+    return (f"https://discord.com/oauth2/authorize?client_id={app_id}"
+            f"&scope=bot+applications.commands&permissions=84992")
 
 def load_favorites():
     ensure_app_state_dir()
@@ -4339,6 +4426,99 @@ if QT_AVAILABLE:
             news_tab.setLayout(news_layout)
             self.tabs.addTab(news_tab, "Hírek")
 
+            bot_tab = QWidget()
+            bot_layout = QVBoxLayout(bot_tab)
+            bot_layout.setSpacing(10)
+            bot_head = QHBoxLayout()
+            self.bot_dot = PulsingDot()
+            bot_head.addWidget(self.bot_dot)
+            self.bot_status = QLabel("Leállítva")
+            self.bot_status.setObjectName("kpi_value")
+            bot_head.addWidget(self.bot_status)
+            bot_head.addStretch(1)
+            self.btn_bot_install = QPushButton("Telepítés / frissítés")
+            self.btn_bot_install.clicked.connect(lambda: self.bot_install(start_after=False))
+            bot_head.addWidget(self.btn_bot_install)
+            self.btn_bot_stop = QPushButton("Leállítás")
+            self.btn_bot_stop.setObjectName("danger_btn")
+            self.btn_bot_stop.setEnabled(False)
+            self.btn_bot_stop.clicked.connect(self.bot_stop)
+            bot_head.addWidget(self.btn_bot_stop)
+            self.btn_bot_start = QPushButton("Indítás")
+            self.btn_bot_start.setObjectName("primary_btn")
+            self.btn_bot_start.clicked.connect(self.bot_start)
+            bot_head.addWidget(self.btn_bot_start)
+            bot_layout.addLayout(bot_head)
+
+            bot_cfg = QGroupBox("Beállítások")
+            bot_cfg.setObjectName("settings_group")
+            cfg_grid = QGridLayout(bot_cfg)
+            cfg_grid.setContentsMargins(12, 10, 12, 12)
+            cfg_grid.setHorizontalSpacing(10)
+            cfg_grid.setVerticalSpacing(8)
+            self.bot_token_edit = QLineEdit()
+            self.bot_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.bot_token_edit.setPlaceholderText("Discord Developer Portal → Bot → Reset Token")
+            self.cb_bot_show_token = QCheckBox("Mutat")
+            self.cb_bot_show_token.toggled.connect(
+                lambda on: self.bot_token_edit.setEchoMode(
+                    QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+            self.bot_guild_edit = QLineEdit()
+            self.bot_guild_edit.setPlaceholderText("jobb klikk a szerverre → ID másolása (ajánlott)")
+            self.bot_channel_edit = QLineEdit()
+            self.bot_channel_edit.setPlaceholderText("ide posztolja a VÉTEL / ELADÁS jelzéseket")
+            self.bot_poll_edit = QLineEdit()
+            self.bot_poll_edit.setPlaceholderText("60")
+            self.bot_poll_edit.setFixedWidth(90)
+            for r, (lbl, w) in enumerate((("Token", self.bot_token_edit), ("Szerver ID", self.bot_guild_edit),
+                                          ("Jelzés-csatorna ID", self.bot_channel_edit),
+                                          ("Figyelés (mp)", self.bot_poll_edit))):
+                cfg_grid.addWidget(QLabel(lbl), r, 0)
+                cfg_grid.addWidget(w, r, 1, 1, 1 if r == 0 else 2)
+            cfg_grid.addWidget(self.cb_bot_show_token, 0, 2)
+            cfg_grid.setColumnStretch(1, 1)
+            bot_btn_row = QHBoxLayout()
+            self.cb_bot_autostart = QCheckBox("Indítás a program indulásakor")
+            bot_btn_row.addWidget(self.cb_bot_autostart)
+            bot_btn_row.addStretch(1)
+            self.btn_bot_invite = QPushButton("Meghívó link másolása")
+            self.btn_bot_invite.clicked.connect(self.bot_copy_invite)
+            bot_btn_row.addWidget(self.btn_bot_invite)
+            self.btn_bot_folder = QPushButton("Mappa megnyitása")
+            self.btn_bot_folder.clicked.connect(self.bot_open_folder)
+            bot_btn_row.addWidget(self.btn_bot_folder)
+            self.btn_bot_save = QPushButton("Mentés")
+            self.btn_bot_save.clicked.connect(lambda: self.bot_save_config(quiet=False))
+            bot_btn_row.addWidget(self.btn_bot_save)
+            cfg_grid.addLayout(bot_btn_row, 4, 0, 1, 3)
+            self.bot_help = QLabel(
+                'Új bot: <a style="color:#5b8cff" href="https://discord.com/developers/applications">'
+                'Discord Developer Portal</a> → New Application → Bot → Reset Token. '
+                'Privilegizált intent nem kell. A meghívó link a tokenből készül '
+                '(jogok: üzenetküldés, beágyazott linkek, előzmények olvasása).'
+            )
+            self.bot_help.setObjectName("status_label")
+            self.bot_help.setTextFormat(Qt.TextFormat.RichText)
+            self.bot_help.setOpenExternalLinks(True)
+            self.bot_help.setWordWrap(True)
+            cfg_grid.addWidget(self.bot_help, 5, 0, 1, 3)
+            bot_layout.addWidget(bot_cfg)
+
+            log_title = QLabel("NAPLÓ")
+            log_title.setObjectName("section_label")
+            bot_layout.addWidget(log_title)
+            self.bot_log = QTextEdit()
+            self.bot_log.setReadOnly(True)
+            self.bot_log.document().setMaximumBlockCount(2000)
+            self.bot_log.setPlaceholderText("A bot kimenete itt jelenik meg…")
+            bot_layout.addWidget(self.bot_log, 1)
+            self.tabs.addTab(bot_tab, "Discord bot")
+            self.bot_proc = None
+            self.bot_setup_proc = None
+            self._bot_start_after_setup = False
+            self._bot_stopping = False
+            self.bot_load_config()
+
             settings_tab = QWidget()
             settings_outer = QVBoxLayout()
             settings_outer.setContentsMargins(0, 0, 0, 0)
@@ -4543,6 +4723,9 @@ if QT_AVAILABLE:
             self.auto_clear_checkbox.setChecked(self.auto_clear_analysis)
             self.sound_alert_checkbox.setChecked(self.sound_alerts_enabled)
             self.csv_autosave_checkbox.setChecked(self.csv_autosave_enabled)
+            if session.get("bot_autostart"):
+                self.cb_bot_autostart.setChecked(True)
+                QTimer.singleShot(1500, self.bot_start)
             if "update_check" in session:
                 self.cb_update_check.setChecked(bool(session["update_check"]))
             if "schedule_enabled" in session:
@@ -4742,7 +4925,228 @@ if QT_AVAILABLE:
                 f'<a href="https://github.com/{UPDATE_REPO}">github.com/{UPDATE_REPO}</a>',
             )
 
+        def bot_log_line(self, text, kind="info"):
+            tk = self.THEME_TOKENS["dark" if self._theme == "dark" else "light"]
+            col = {"err": tk["down"], "ok": tk["up"], "sys": tk["accent_text"]}.get(kind, tk["text"])
+            ts = QDateTime.currentDateTime().toString("HH:mm:ss")
+            for line in str(text).rstrip().splitlines():
+                self.bot_log.append(
+                    f'<span style="color:{tk["faint"]}">{ts}</span>&nbsp; '
+                    f'<span style="color:{col}">{html.escape(line)}</span>'
+                )
+
+        def bot_set_state(self, text, running):
+            self.bot_status.setText(text)
+            self.bot_dot.set_active(running)
+            self.btn_bot_start.setEnabled(not running)
+            self.btn_bot_stop.setEnabled(running)
+            self.btn_bot_install.setEnabled(not running)
+
+        def bot_load_config(self):
+            env = read_bot_env()
+            self.bot_token_edit.setText(env.get("DISCORD_TOKEN", "") if env.get("DISCORD_TOKEN") != "ide_jon_a_token" else "")
+            self.bot_guild_edit.setText(env.get("GUILD_ID", ""))
+            self.bot_channel_edit.setText(env.get("SIGNALS_CHANNEL_ID", ""))
+            self.bot_poll_edit.setText(env.get("POLL_SECONDS", ""))
+
+        def bot_save_config(self, quiet=True):
+            from PySide6.QtWidgets import QMessageBox
+            guild = self.bot_guild_edit.text().strip()
+            chan = self.bot_channel_edit.text().strip()
+            poll = self.bot_poll_edit.text().strip()
+            for label, v in (("Szerver ID", guild), ("Jelzés-csatorna ID", chan), ("Figyelés", poll)):
+                if v and not v.isdigit():
+                    QMessageBox.warning(self, "Discord bot", f"A(z) „{label}” mezőbe csak számot írj.")
+                    return False
+            write_bot_env({
+                "DISCORD_TOKEN": self.bot_token_edit.text().strip(),
+                "GUILD_ID": guild,
+                "SIGNALS_CHANNEL_ID": chan,
+                "POLL_SECONDS": poll or "60",
+            })
+            if not quiet:
+                self.bot_log_line(f"Beállítások mentve: {BOT_DIR / '.env'}", "sys")
+            return True
+
+        def bot_install(self, start_after=False):
+            from PySide6.QtCore import QProcess
+            from PySide6.QtWidgets import QMessageBox
+            if self.bot_setup_proc is not None:
+                return
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                n = install_bot_files()
+            except Exception as e:
+                QApplication.restoreOverrideCursor()
+                self.bot_log_line(f"A bot fájljainak telepítése nem sikerült: {e}", "err")
+                QMessageBox.critical(self, "Discord bot", f"A bot telepítése nem sikerült:\n{e}")
+                return
+            QApplication.restoreOverrideCursor()
+            self.bot_log_line(f"Bot fájlok frissítve ({n} fájl): {BOT_DIR}", "sys")
+            base = bot_base_python()
+            if not base:
+                self.bot_log_line("Nem található Python a gépen – a bothoz Python 3.10+ kell.", "err")
+                return
+            self._bot_start_after_setup = start_after
+            steps = []
+            if not bot_python().exists():
+                steps.append((base, ["-m", "venv", str(BOT_DIR / ".venv")], "Saját Python-környezet létrehozása…"))
+            steps.append((str(bot_python()), ["-m", "pip", "install", "--disable-pip-version-check", "-q",
+                                              "-r", str(BOT_DIR / "requirements.txt")], "Csomagok telepítése (discord.py)…"))
+            self.bot_set_state("Telepítés…", False)
+            self.btn_bot_start.setEnabled(False)
+            self.btn_bot_install.setEnabled(False)
+
+            def run_next():
+                if not steps:
+                    self.bot_setup_proc = None
+                    self.bot_log_line("A bot telepítve, indítható.", "ok")
+                    self.bot_set_state("Leállítva", False)
+                    if self._bot_start_after_setup:
+                        self.bot_start()
+                    return
+                prog, args, msg = steps.pop(0)
+                self.bot_log_line(msg, "sys")
+                proc = QProcess(self)
+                proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+                proc.readyReadStandardOutput.connect(
+                    lambda: self.bot_log_line(bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")))
+
+                def finished(code, _status):
+                    if code != 0:
+                        self.bot_setup_proc = None
+                        self.bot_log_line(f"A telepítési lépés hibával állt le (kód: {code}).", "err")
+                        self.bot_set_state("Telepítési hiba", False)
+                        return
+                    run_next()
+
+                proc.finished.connect(finished)
+                proc.setProcessEnvironment(self._bot_env())
+                self.bot_setup_proc = proc
+                proc.start(prog, args)
+
+            run_next()
+
+        def _bot_env(self):
+            from PySide6.QtCore import QProcessEnvironment
+            env = QProcessEnvironment.systemEnvironment()
+            env.remove("PYTHONHOME")
+            env.remove("PYTHONPATH")
+            env.insert("PYTHONUNBUFFERED", "1")
+            env.insert("PYTHONIOENCODING", "utf-8")
+            env.insert("TRACKER_DATA_DIR", str(APP_STATE_DIR))
+            return env
+
+        def bot_start(self):
+            from PySide6.QtCore import QProcess
+            from PySide6.QtWidgets import QMessageBox
+            if self.bot_proc is not None:
+                return
+            if not self.bot_token_edit.text().strip():
+                self.nav_tabs.setCurrentIndex(self.stacked.indexOf(self.bot_log.parentWidget()))
+                QMessageBox.information(self, "Discord bot", "Add meg a bot tokenjét, aztán indítsd újra.")
+                return
+            if not self.bot_save_config():
+                return
+            if not (BOT_DIR / "bot.py").is_file() or not bot_python().exists():
+                self.bot_log_line("A bot még nincs telepítve – telepítem, utána indul.", "sys")
+                self.bot_install(start_after=True)
+                return
+            proc = QProcess(self)
+            proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            proc.setWorkingDirectory(str(BOT_DIR))
+            proc.setProcessEnvironment(self._bot_env())
+            proc.readyReadStandardOutput.connect(self._bot_read)
+            proc.finished.connect(self._bot_finished)
+            self._bot_stopping = False
+            self.bot_proc = proc
+            self.bot_log_line("Bot indítása…", "sys")
+            self.bot_set_state("Indul…", True)
+            proc.start(str(bot_python()), ["-u", "bot.py"])
+            if not proc.waitForStarted(5000):
+                self.bot_log_line("A bot folyamata nem indult el.", "err")
+                self.bot_proc = None
+                self.bot_set_state("Hiba", False)
+
+        def _bot_read(self):
+            import re
+            if self.bot_proc is None:
+                return
+            text = bytes(self.bot_proc.readAllStandardOutput()).decode("utf-8", "replace")
+            for line in text.splitlines():
+                if not line.strip() or "voice will NOT be supported" in line or "message content intent" in line:
+                    continue
+                is_log = bool(re.match(r"\d\d:\d\d:\d\d \[", line))
+                if line.startswith("Traceback"):
+                    self._bot_in_tb = True
+                    continue
+                if getattr(self, "_bot_in_tb", False) and not is_log:
+                    if not line[:1].isspace() and line.strip("~^ ") and not line.startswith(("The above", "During handling")):
+                        self._bot_tb_last = line
+                    continue
+                self._bot_flush_tb()
+                line = re.sub(r"^\d\d:\d\d:\d\d ", "", line)
+                low = line.lower()
+                kind = "err" if ("[error]" in low or "hiba" in low) else "info"
+                if "Bejelentkezve mint" in line:
+                    name = line.split("Bejelentkezve mint", 1)[1].split("(ID")[0].strip()
+                    self.bot_set_state(f"Fut – bejelentkezve: {name}", True)
+                    kind = "ok"
+                self.bot_log_line(line, kind)
+
+        def _bot_flush_tb(self):
+            self._bot_in_tb = False
+            last = getattr(self, "_bot_tb_last", "")
+            self._bot_tb_last = ""
+            if not last:
+                return
+            if "Improper token" in last or "LoginFailure" in last:
+                self.bot_status.setText("Hibás token")
+                self.bot_log_line("A Discord elutasította a tokent – másold ki újra: "
+                                  "Developer Portal → Bot → Reset Token.", "err")
+            elif "PrivilegedIntentsRequired" in last:
+                self.bot_log_line("A bot privilegizált jogosultságot kér – a Developer Portalon kapcsold be.", "err")
+            else:
+                self.bot_log_line(last, "err")
+
+        def _bot_finished(self, code, _status):
+            self._bot_flush_tb()
+            stopping = self._bot_stopping
+            self.bot_proc = None
+            if stopping:
+                self.bot_log_line("A bot leállítva.", "sys")
+                self.bot_set_state("Leállítva", False)
+            else:
+                self.bot_log_line(f"A bot kilépett (kód: {code}).", "err" if code else "sys")
+                self.bot_set_state("Hibás token – leállt" if self.bot_status.text() == "Hibás token" else "Leállt", False)
+
+        def bot_stop(self):
+            if self.bot_proc is None:
+                return
+            self._bot_stopping = True
+            self.bot_proc.terminate()
+            QTimer.singleShot(5000, lambda: self.bot_proc.kill() if self.bot_proc is not None else None)
+
+        def bot_copy_invite(self):
+            from PySide6.QtWidgets import QMessageBox
+            url = bot_invite_url(self.bot_token_edit.text().strip())
+            if not url:
+                QMessageBox.information(self, "Discord bot", "Előbb add meg a bot tokenjét – abból készül a meghívó link.")
+                return
+            QApplication.clipboard().setText(url)
+            self.bot_log_line("Meghívó link a vágólapon – nyisd meg böngészőben, és válaszd ki a szervert.", "ok")
+
+        def bot_open_folder(self):
+            from PySide6.QtGui import QDesktopServices
+            BOT_DIR.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(BOT_DIR)))
+
         def closeEvent(self, event):
+            if self.bot_proc is not None:
+                self._bot_stopping = True
+                self.bot_proc.terminate()
+                if not self.bot_proc.waitForFinished(4000):
+                    self.bot_proc.kill()
             self._save_session_state()
             super().closeEvent(event)
 
@@ -4757,6 +5161,7 @@ if QT_AVAILABLE:
                 "csv_path": self.csv_path,
                 "schedule_enabled": self.cb_schedule_analysis.isChecked(),
                 "update_check": self.cb_update_check.isChecked(),
+                "bot_autostart": self.cb_bot_autostart.isChecked(),
                 "schedule_time": self.time_schedule.time().toString("HH:mm"),
                 "selected_assets": [i.text() for i in self.list_widget.selectedItems()],
                 "active_tab": self.stacked.currentIndex(),
@@ -4817,7 +5222,7 @@ if QT_AVAILABLE:
             self.btn_clear.setText(t("clear_output"))
             self.btn_set_amount.setText(t("set_amount"))
             tab_keys = ["tab_analysis", "tab_chart", "tab_alerts", "tab_portfolio",
-                        "tab_correlation", "tab_history", "tab_news", "tab_settings"]
+                        "tab_correlation", "tab_history", "tab_news", "tab_discord", "tab_settings"]
             for i, k in enumerate(tab_keys):
                 if i < self.nav_tabs.count():
                     self.nav_tabs.setTabText(i, t(k))
